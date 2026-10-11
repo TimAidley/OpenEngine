@@ -8,7 +8,9 @@ foreach(_port IN ITEMS ez-tree-upstream diharaw-volumetric-fog-upstream
         sanielx-height-fog-upstream mirzabeig-gpu-fog-particles-upstream
         crest-ocean-upstream godot-visual-shader-upstream renderdoc-app-api-upstream
         transitive-only-port)
-    file(WRITE "${_share}/${_port}/copyright" "Copyright ${_port}\nPermission text; keep this complete.\n```nested fence```\n")
+    # "for (;;)" is the vendored C source some ports append to their copyright, and the
+    # ";;" is what a CMake list operation on the text would collapse.
+    file(WRITE "${_share}/${_port}/copyright" "Copyright ${_port}\nPermission text; keep this complete.\nfor (;;) {}\n```nested fence```\n")
 endforeach()
 file(WRITE "${_share}/transitive-only-port/LICENSES/nested/part.txt" "Sidecar permission text; retained verbatim.\n")
 file(WRITE "${_share}/ez-tree-upstream/EZTREE_UPSTREAM.json" "{}\n")
