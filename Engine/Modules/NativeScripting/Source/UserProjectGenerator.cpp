@@ -301,6 +301,13 @@ std::string UserProjectGenerator::BuildCMakeListsContent(const NativeBuildConfig
     out << "else()\n";
     out << "    target_compile_options(" << config.ModuleName
         << " PRIVATE $<$<NOT:$<CONFIG:Debug>>:-g>)\n";
+    // The engine's headers name members after their types (UI/ResolvedStyle.h:
+    // `DisplayMode DisplayMode;`), which GCC 14 and later reject by default.
+    // The engine builds with the same flag (CMakeLists.txt, the GCC/Clang
+    // warning options); without it any user TU that includes UI/UIElement.h
+    // fails to compile on Linux.
+    out << "    target_compile_options(" << config.ModuleName
+        << " PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Wno-changes-meaning>)\n";
     out << "endif()\n\n";
 
     out << "target_include_directories(" << config.ModuleName << " PRIVATE\n";
