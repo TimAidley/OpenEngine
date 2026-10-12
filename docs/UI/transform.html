@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transforms — rotate, scale, translate and skew</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel-light:#1c232c; --border:#2a323d;
+    --text:#d7dde5; --muted:#8b97a6; --accent:#5db0ff;
+    --danger:#ff6b6b; --bad:#ff6b6b; --ok:#5ad19b; --good:#5ad19b; --warn:#e8c468;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--text);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       margin:0;padding:0 0 80px}
+  .wrap{max-width:980px;margin:0 auto;padding:32px 24px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.4px}
+  h2{font-size:22px;margin:42px 0 14px;padding-top:22px;border-top:1px solid var(--border)}
+  h3{font-size:17px;margin:26px 0 8px;color:#e9eef4}
+  p,li{color:var(--text)}
+  .lede{color:var(--muted);font-size:13px;text-transform:uppercase;letter-spacing:.12em;margin:0 0 26px}
+  a{color:var(--accent);text-decoration:none}
+  code{font-family:var(--mono);font-size:.88em;background:#11161d;border:1px solid var(--border);
+       border-radius:4px;padding:1px 5px}
+  pre{font-family:var(--mono);font-size:13px;background:#11161d;border:1px solid var(--border);
+      border-radius:8px;padding:14px 18px;overflow:auto;line-height:1.5}
+  pre code{background:none;border:0;padding:0}
+  .panel{border:1px solid var(--border);border-left-width:4px;border-radius:8px;background:var(--panel);
+         padding:14px 18px;margin:16px 0}
+  .panel.ok{border-left-color:var(--ok)} .panel.warn{border-left-color:var(--warn)}
+  .panel h4{margin:0 0 6px;font-size:14px;text-transform:uppercase;letter-spacing:.06em}
+  .panel.ok h4{color:var(--ok)} .panel.warn h4{color:var(--warn)}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.grid-2{grid-template-columns:1fr}}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:13.5px}
+  th,td{border:1px solid var(--border);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel-light);color:#e9eef4}
+  tr:hover td{background:#12171e}
+  .muted{color:var(--muted)}
+  ul{padding-left:22px} li{margin:4px 0}
+  footer{max-width:980px;margin:40px auto 0;padding:18px 24px 0;border-top:1px solid var(--border);color:var(--muted);font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Transforms</h1>
+  <p class="lede">Feature guide · UI / CSS properties</p>
+
+  <p>The <code>transform</code> property rotates, scales, moves and skews an element and
+  everything inside it, the way it does on the web. It is a paint-time change: layout never
+  sees it, so the element keeps its place in the flow, its siblings do not move, and
+  <code>GetLayoutX()</code> and friends report the untransformed box. Pointer hit-testing
+  follows the painted shape, so a rotated button is clicked where it is drawn.</p>
+
+  <p>Use it for dials and needles, compass roses, minimaps that turn with the player,
+  spinners, and hover and press feedback that grows or shrinks a control.</p>
+
+  <h2>Declare a transform</h2>
+
+<pre><code>.needle {
+    position: absolute;
+    left: 60px;
+    top: 10px;
+    width: 8px;
+    height: 70px;
+    background-image: url("UI/needle.png");
+    transform-origin: 50% 100%;
+    transform: rotate(35deg);
+}
+
+.card:hover {
+    transform: scale(1.04);
+}
+
+.card {
+    transition: transform 0.15s ease;
+}</code></pre>
+
+  <h2>Properties</h2>
+  <table>
+    <tr><th>Property</th><th>Values</th><th>Initial</th></tr>
+    <tr><td><code>transform</code></td><td><code>none</code>, or a space-separated list of the
+      functions below, applied left to right</td><td><code>none</code></td></tr>
+    <tr><td><code>transform-origin</code></td><td>One or two of <code>left</code>,
+      <code>center</code>, <code>right</code>, <code>top</code>, <code>bottom</code>, a length
+      in px, or a percentage of the border box. The point the transform pivots about.</td>
+      <td><code>50% 50%</code></td></tr>
+  </table>
+
+  <table>
+    <tr><th>Function</th><th>Arguments</th></tr>
+    <tr><td><code>translate(x, y)</code>, <code>translateX(x)</code>, <code>translateY(y)</code></td>
+      <td>px (or a <code>calc()</code> that folds to px), or a percentage of the element's own
+      border box. <code>y</code> defaults to 0.</td></tr>
+    <tr><td><code>scale(x, y)</code>, <code>scaleX(x)</code>, <code>scaleY(y)</code></td>
+      <td>Numbers or percentages (<code>50%</code> is 0.5). <code>y</code> defaults to
+      <code>x</code>.</td></tr>
+    <tr><td><code>rotate(a)</code></td><td>An angle in <code>deg</code>, <code>rad</code>,
+      <code>grad</code> or <code>turn</code>. Positive turns clockwise.</td></tr>
+    <tr><td><code>skew(ax, ay)</code>, <code>skewX(a)</code>, <code>skewY(a)</code></td>
+      <td>Angles. <code>ay</code> defaults to 0.</td></tr>
+    <tr><td><code>matrix(a, b, c, d, e, f)</code></td><td>Numbers, as in CSS: x' = ax + cy + e,
+      y' = bx + dy + f, with e and f in px.</td></tr>
+  </table>
+
+  <p>A declaration with any function the engine does not support (the 3D ones such as
+  <code>rotateX()</code>, <code>perspective()</code> and <code>matrix3d()</code>), or with
+  more than eight functions, is invalid as a whole, and the earlier rule stays in force.</p>
+
+  <h2>Set it from code</h2>
+
+  <p>A transform that changes every frame, such as a needle following a value, is set as a
+  style override. Changing an existing transform is cheap: the element keeps one 32-byte
+  transform slot, the change rewrites only that slot, and its children follow on the GPU
+  without being re-emitted.</p>
+
+<pre><code>#include "UI/StyleProperties.h"
+
+void UpdateSpeedo(GameEngine::UIElement&amp; needle, float speed)
+{
+    using namespace GameEngine;
+    needle.Overrides().Set(Style::Transform, TransformValue{}.Rotate(speed * 2.7f - 135.0f));
+}</code></pre>
+
+  <p><code>TransformValue</code> has a builder for each function: <code>Translate(x, y,
+  xIsPercent, yIsPercent)</code>, <code>Scale(s)</code>, <code>Scale(x, y)</code>,
+  <code>Rotate(degrees)</code>, <code>Skew(xDegrees, yDegrees)</code> and
+  <code>Matrix(a, b, c, d, e, f)</code>. A default <code>TransformValue{}</code> is
+  <code>none</code>. <code>Style::TransformOrigin</code> takes a
+  <code>TransformOriginValue{x, xIsPercent, y, yIsPercent}</code>.</p>
+
+  <div class="panel warn">
+    <h4>Keep the transform on</h4>
+    <p>Switching between <code>none</code> and a transform costs a full primitive rebuild of
+    the UI, because the subtree has to be re-pointed at a new slot. For something that
+    animates, leave a transform in place (<code>rotate(0deg)</code> rather than
+    <code>none</code>) and change its value.</p>
+  </div>
+
+  <h2>Transitions</h2>
+
+  <p><code>transform</code> and <code>transform-origin</code> can be transitioned, and both
+  are part of <code>transition: all</code>. Two transform lists interpolate function by
+  function when they have the same functions in the same order (and the same units on each
+  <code>translate()</code>); <code>none</code> interpolates as the other list with identity
+  arguments. Lists that differ in shape switch at the midpoint rather than interpolating
+  their matrices.</p>
+
+  <h2>Clipping</h2>
+
+  <p>Clips behave as on the web:</p>
+  <ul>
+    <li>An ancestor with <code>overflow: hidden</code> clips a transformed descendant where it
+    is painted. A round clip (<code>overflow: hidden; border-radius: 50%</code>) around a
+    rotated image makes a turning minimap.</li>
+    <li>A transformed element with <code>overflow: hidden</code> clips its children to its own
+    transformed box, so the clip turns with it.</li>
+  </ul>
+
+  <h2>Pointer input</h2>
+
+  <p>Hit-testing maps the pointer through every transformed ancestor, so hover, press and
+  click land on what is drawn. As before, hit-testing clips use the clip's rectangle and
+  ignore its rounded corners.</p>
+
+  <div class="panel warn">
+    <h4>Coordinates in events are screen coordinates</h4>
+    <p>Event positions are not transformed. A control that works out a value from the
+    pointer position, such as a slider's thumb, a text field's caret or a tree view's row,
+    does that against its untransformed layout box. Inside a rotated or scaled element such a
+    control would read the pointer in the wrong place. Transform display elements, or whole
+    panels that are only translated, rather than interactive controls.</p>
+  </div>
+
+  <h2>Limits</h2>
+  <ul>
+    <li>2D only. There are no 3D transforms, no <code>perspective</code> and no
+    <code>backface-visibility</code>.</li>
+    <li>A transform does not create a stacking context or a containing block. Paint order is
+    the usual document and <code>z-index</code> order.</li>
+    <li>Overlays (dropdowns, tooltips, modals, drag previews) paint in screen space. An
+    ancestor's transform does not carry into a popup it opens.</li>
+    <li>A chain of up to eight nested transformed elements composes; past eight, the outermost
+    ones are ignored. A primitive is clipped by at most four nested clips, the same as
+    before.</li>
+    <li>Elements inside a transformed element are never culled against an off-screen clip.
+    That costs a little extra drawing for large transformed scroll content; ordinary
+    transformed panels are unaffected.</li>
+  </ul>
+
+  <h2>Changelog</h2>
+  <ul>
+    <li>2026-10-12: Added <code>transform</code> and <code>transform-origin</code>.</li>
+  </ul>
+
+</div>
+<footer>Transforms guide · 2026-10-12</footer>
+</body>
+</html>
