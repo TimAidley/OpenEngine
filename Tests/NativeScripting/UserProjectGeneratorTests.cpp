@@ -97,6 +97,18 @@ TEST(UserProjectGenerator, NonDebugConfigsCarryDebugInfoFlags)
               std::string::npos);
 }
 
+TEST(UserProjectGenerator, GccUserBuildsAcceptTheEngineHeaders)
+{
+    // The engine's UI headers name members after their types (UI/ResolvedStyle.h),
+    // which GCC 14 and later reject by default; the engine itself builds with
+    // -Wno-changes-meaning, so a user module that includes UI/UIElement.h needs it too.
+    const auto config = MakeSdkConfig("/geproj", "/editor/SDK");
+    const std::string content = ns::UserProjectGenerator::BuildCMakeListsContent(config);
+
+    EXPECT_NE(content.find("target_compile_options(UserScripts PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Wno-changes-meaning>)"),
+              std::string::npos);
+}
+
 TEST(UserProjectGenerator, DebugFastIsDeclaredForMultiConfigGenerators)
 {
     // A user module builds in the HOST engine's config, and DebugFast is one CMake does
