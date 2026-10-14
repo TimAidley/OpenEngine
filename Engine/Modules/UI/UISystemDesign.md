@@ -100,7 +100,7 @@ Integration:
   - Split static (from CSS) vs dynamic (pseudo-state + inline overrides) to allow fast toggling and hot reload
 - Properties
   - Layout: display, flex-direction, flex-wrap, flex, flex-grow/shrink/basis, align-items, align-self, justify-content, gap, width/height/min/max, margin/padding/border
-  - Visual: background-color/gradient, background-image (later), border-color/width/radius (per-edge/corner), opacity, box-shadow (later), overflow, transform/transform-origin (2D, paint-time; docs/UI/transform.html)
+  - Visual: background-color/gradient, background-image (later), border-color/width/radius (per-edge/corner), opacity, box-shadow (later), overflow, transform/transform-origin (2D, paint-time; docs/ui/transform.mdx)
   - Text: color, font-family/size/weight/style, line-height, white-space (initially single-line clip), text-align
   - Custom properties: `--vars` are stored by `StringId` keys; use `HashStringId()` or the `_sid` literal for code access
 
