@@ -245,6 +245,7 @@ bool RuntimeHost::InitRendering()
     Rendering::DeviceDesc desc{};
     desc.preferredAPI = Rendering::GraphicsAPI::Auto;
     desc.enableSwapchain = true;
+    desc.persistPipelineCache = true;
     desc.applicationName = m_Desc.Title;
     desc.vsync = m_Desc.VSync;
     desc.hdrEnabled = m_Desc.HdrEnabled;

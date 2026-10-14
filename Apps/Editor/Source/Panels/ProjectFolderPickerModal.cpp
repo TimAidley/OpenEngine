@@ -212,7 +212,7 @@ void EnableWindowDrag(UIElement& handle, UIElement& window, bool directTargetOnl
 // abandon the build rather than render half a modal.
 UIElement* RequireLayoutElement(UIElement& root, const char* elementId, bool& layoutComplete)
 {
-    UIElement* element = root.FindById(elementId);
+    UIElement* element = root.FindById(HashStringId(elementId));
     if (!element)
     {
         Logger::Log::Error("ProjectPicker: ProjectPicker.uxml has no element with id '{}'", elementId);
@@ -1415,7 +1415,7 @@ void ProjectFolderPickerModal::Hide()
         const std::string& focusId = manager->GetFocusedElementId();
         if (!focusId.empty())
         {
-            if (UIElement* focused = FindById(focusId))
+            if (UIElement* focused = FindById(HashStringId(focusId)))
             {
                 for (UIElement* p = focused; p; p = p->GetParent())
                 {
@@ -1855,7 +1855,7 @@ void ProjectFolderPickerModal::Update()
         m_LogoHueAnimationTime = std::fmod(
             m_LogoHueAnimationTime + dt * kLogoHueDegreesPerSecond, 360.0f);
 
-        if (UIElement* cubeIcon = FindById("cube-icon"))
+        if (UIElement* cubeIcon = FindById("cube-icon"_sid))
         {
             const float h = m_LogoHueAnimationTime;
             constexpr float s = 0.5f;
@@ -2303,21 +2303,8 @@ void ProjectFolderPickerModal::ShowImportProjectView()
 
     if (m_ImportDestinationField && TrimProjectText(m_ImportDestinationField->GetValue()).empty())
     {
-        std::filesystem::path initialDestination;
-        Editor::SettingsStore prefs = Editor::OpenEditorPreferences();
-        std::string err;
-        (void)prefs.Load(&err);
-        std::string lastBrowsedDirectory;
-        if (prefs.TryGetString("lastBrowsedDirectory", lastBrowsedDirectory) &&
-            !lastBrowsedDirectory.empty())
-        {
-            std::error_code ec;
-            if (std::filesystem::is_directory(lastBrowsedDirectory, ec))
-                initialDestination = lastBrowsedDirectory;
-        }
-        if (initialDestination.empty())
-            initialDestination = ResolveHomePath();
-        m_ImportDestinationField->SetValue(initialDestination.generic_string());
+        m_ImportDestinationField->SetValue(
+            Editor::LoadNewProjectLocation(ResolveHomePath()).generic_string());
     }
     if (m_StackedScrim)
         m_StackedScrim->Overrides().Set(Style::Display, DisplayMode::Flex);
@@ -2591,6 +2578,7 @@ void ProjectFolderPickerModal::OnImportProjectClicked()
         setError("Another project is still being imported.");
         return;
     }
+    Editor::SaveNewProjectLocation(parent);
     m_AcquireInFlight = true;
     UpdateImportProjectEnabled();
     ShowLoading();
@@ -3010,7 +2998,7 @@ void ProjectFolderPickerModal::RefreshRecentProjectsList()
     newName->SetText("New project");
     newName->AddClass("project-card-title");
     auto newMeta = std::make_unique<Label>();
-    newMeta->SetText("Blank · 3D · Open World");
+    newMeta->SetText("Blank · 3D");
     newMeta->AddClass("project-card-meta");
     newBody->AddChild(std::move(newName));
     newBody->AddChild(std::move(newMeta));

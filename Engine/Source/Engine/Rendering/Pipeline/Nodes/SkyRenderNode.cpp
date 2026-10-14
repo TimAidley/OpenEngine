@@ -1,14 +1,17 @@
 #include "Engine/Rendering/Pipeline/Nodes/SkyRenderNode.h"
 #include "Engine/Rendering/Pipeline/RenderPipeline.h"
 #include "Engine/Rendering/RenderServices.h"
+#include "Engine/Rendering/SkyBackdrop.h"
 #include "Engine/Rendering/SkyRenderFeature.h"
-#include "Components/Rendering/SkyEnvironment.h" // Components::SkyMode
 #include "Logger/Logger.h"
 #include "Rendering/Core/Device.h"
 #include "Rendering/Sky/SkyRenderer.h"
 #include "Rendering/Sky/SkySettings.h"
+#include "Rendering/Sky/SkyViewLutAltitude.h"
+#include "Rendering/Sky/StarSparkleEnergy.h"
 
 #include <nlohmann/json.hpp>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <numbers>
@@ -28,22 +31,6 @@ static constexpr float kProjectionEpsilon = 1e-6f;
 // sky_render.frag: starSizeRange.w >= 0 selects HDRI path (intensity may be 0 for black sky).
 // Sentinel selects procedural/analytic sky so zero intensity is not confused with "no HDRI".
 static constexpr float kSkyHdriProceduralSentinel = -1.0f;
-
-// Scene Skybox with an equirectangular HDRI: the fragment shader samples the environment
-// map directly by view direction. Procedural transmittance / sky-view LUT work is unused.
-static bool IsHdriBackdropSky(const Rendering::SkySettings& settings)
-{
-    return settings.environmentTexture.IsValid();
-}
-
-// Gradient sky renders a stylized 3-color gradient instead of the atmosphere, so — like the
-// HDRI backdrop — it needs neither the sky-view LUT compute nor the star billboards. HDRI wins
-// if both somehow resolve (a gradient sky never sets an environment texture).
-static bool IsGradientSky(const Rendering::SkySettings& settings)
-{
-    return settings.skyMode == static_cast<uint32_t>(Components::SkyMode::Gradient) &&
-           !settings.environmentTexture.IsValid();
-}
 
 static constexpr uint32_t DivCeil(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
 
@@ -128,6 +115,9 @@ static float ExtractAspect(const Rendering::CameraData& cam)
 
 static constexpr float kBaseStarRadius    = 0.225f;
 static constexpr float kBaseDiamondRadius = 0.5625f;
+static_assert(kBaseStarRadius / kBaseDiamondRadius - Rendering::kStarSparkleCoreRadius < 1e-6f &&
+                  Rendering::kStarSparkleCoreRadius - kBaseStarRadius / kBaseDiamondRadius < 1e-6f,
+              "the star sparkle's energy gain integrates the core at this radius");
 static constexpr float kBaseCellScale     = 256.0f; // Shader clamps to [64, 4096]
 static constexpr float kTwinkleMinFreq    = 0.3f;
 static constexpr float kTwinkleMaxFreq    = 1.5f;
@@ -185,8 +175,9 @@ static void FillSkyUBOFromSettings(const Rendering::SkySettings& settings, SkyUB
 
     ubo.starTwinkleAmp[0] = settings.twinkleIntensity;
     ubo.starTwinkleAmp[1] = 1.2f;
-    ubo.starTwinkleAmp[2] = 0.0f; // Multi-cell flag: 0 = disabled
-    ubo.starTwinkleAmp[3] = 0.0f; // vec4 padding
+    // The star's glow and sparkle energy gains; the sky pass sets them (StarSparkleEnergyFor).
+    ubo.starTwinkleAmp[2] = 1.0f;
+    ubo.starTwinkleAmp[3] = 1.0f;
 
     ubo.starDensityHorizon[0] = settings.starDensity;
     ubo.starDensityHorizon[1] = kHorizonFadeStart;
@@ -210,9 +201,7 @@ static void FillSkyUBOFromSettings(const Rendering::SkySettings& settings, SkyUB
     // Gradient sky: .rgb already scene-linear (intensity folded in by the system). The mode
     // sentinel rides gradientSkyTop.w: an HDRI backdrop wins (it is a separate component path),
     // so gradient is only active when there is no environment texture.
-    const bool gradientMode =
-        settings.skyMode == static_cast<uint32_t>(Components::SkyMode::Gradient) &&
-        !settings.environmentTexture.IsValid();
+    const bool gradientMode = ClassifySkyBackdrop(settings) == SkyBackdropKind::Gradient;
     for (int i = 0; i < 3; ++i)
     {
         ubo.gradientSkyTop[i]     = settings.gradientSkyTopColor[i];
@@ -224,51 +213,89 @@ static void FillSkyUBOFromSettings(const Rendering::SkySettings& settings, SkyUB
     ubo.gradientSkyBottom[3]  = 0.0f;
 }
 
-// Digest of the SkyViewLUT compute inputs. Used by the activation predicate
-// to skip the dispatch when nothing the LUT depends on has changed. Saves
-// ~0.026 ms / frame on static skies (the common editor-idle case).
+// FNV-1a 64-bit. Stable across runs; sufficient quality for change detection.
+static void MixDigest(uint64_t& h, const void* data, size_t bytes)
+{
+    const uint8_t* p = static_cast<const uint8_t*>(data);
+    for (size_t i = 0; i < bytes; ++i)
+    {
+        h ^= p[i];
+        h *= 1099511628211ull;
+    }
+}
+
+// Digest of the settings the multiscatter and sky-view LUT bakes read. Used by the dirty gates to
+// skip the dispatches when nothing a LUT depends on has changed. Saves ~0.026 ms / frame on static
+// skies (the common editor-idle case).
 //
-// IMPORTANT: only hash the fields the sky_view_lut.comp shader actually
-// reads. SkyEnvironmentSystem updates settings.skyTimeSeconds and several
-// other fields every frame (for stars/falling-star animation in the
-// sky_render.frag stage), but the LUT shader doesn't sample those — hashing
-// them would force redundant LUT recomputes every frame and defeat the gate.
+// IMPORTANT: only hash the fields the LUT shaders actually read. SkyEnvironmentSystem updates
+// settings.skyTimeSeconds and several other fields every frame (for stars/falling-star animation in
+// the sky_render.frag stage), but the LUT shaders don't sample those; hashing them would force
+// redundant LUT recomputes every frame and defeat the gate.
 //
 // LUT shader inputs (see sky_view_lut.comp main()):
 //   - uSky.sunDirectionWS   (settings.scatteringSunDir)
 //   - uSky.sunColor         (settings.primarySunColor)
 //   - uSky.sunIntensity     (settings.primarySunIntensity)
 //   - all uAtmos.* fields   (filled from settings via FillAtmosphereFromSettings)
-//
-// Note: uSky.cameraPositionWS is referenced by the shader but the LUT path
-// in FillSkyUBOFromSettings leaves it at (0,0,0); the LUT is computed from
-// the planet origin, not the camera. So we don't need to include camera state.
-static uint64_t ComputeSkyViewLutInputDigest(const Rendering::SkySettings& settings)
+//   - uSky.cameraPositionWS (sky-view only: the altitude band's height, see SkyViewLutDigest)
+static uint64_t ComputeSkyLutSettingsDigest(const Rendering::SkySettings& settings)
 {
     Rendering::AtmosphereParametersGPU atmo{};
     FillAtmosphereFromSettings(settings, atmo);
 
-    // FNV-1a 64-bit. Stable across runs; sufficient quality for change detection.
     uint64_t h = 14695981039346656037ull;
-    auto mix = [&h](const void* data, size_t bytes)
-    {
-        const uint8_t* p = static_cast<const uint8_t*>(data);
-        for (size_t i = 0; i < bytes; ++i)
-        {
-            h ^= p[i];
-            h *= 1099511628211ull;
-        }
-    };
-
     // Atmosphere block in its entirety.
-    mix(&atmo, sizeof(atmo));
-
-    // Only the sun-related SkyUBO fields the LUT shader actually consumes.
-    mix(settings.scatteringSunDir, sizeof(settings.scatteringSunDir));
-    mix(settings.primarySunColor, sizeof(settings.primarySunColor));
-    mix(&settings.primarySunIntensity, sizeof(settings.primarySunIntensity));
-
+    MixDigest(h, &atmo, sizeof(atmo));
+    // Only the sun-related SkyUBO fields the LUT shaders actually consume.
+    MixDigest(h, settings.scatteringSunDir, sizeof(settings.scatteringSunDir));
+    MixDigest(h, settings.primarySunColor, sizeof(settings.primarySunColor));
+    MixDigest(h, &settings.primarySunIntensity, sizeof(settings.primarySunIntensity));
     return h;
+}
+
+// The sky-view LUT's digest: the settings digest and the camera's altitude band. The band is the
+// only camera input; a camera moving inside its band leaves the digest unchanged.
+static uint64_t SkyViewLutDigest(uint64_t settingsDigest, uint32_t altitudeBand)
+{
+    uint64_t h = settingsDigest;
+    MixDigest(h, &altitudeBand, sizeof(altitudeBand));
+    return h;
+}
+
+// The altitude band of the camera the sky-view LUT is baked for. One LUT serves every view, so one
+// camera decides: the first view drawing through the pipeline this frame whose purpose is Game,
+// else the first EditorScene view (previews and utility captures never move it). Band 0 (the ground)
+// when there is neither.
+static uint32_t SkyViewLutCameraBand(Engine::Renderer::RenderServices& rs,
+                                     std::span<const Rendering::ViewDesc> views,
+                                     float planetRadius)
+{
+    const Rendering::ViewDesc* chosen = nullptr;
+    for (const auto& v : views)
+    {
+        if (!v.activeRenderPipeline || v.ActiveRenderLayerMask() == 0)
+            continue;
+        if (v.purpose == Rendering::ViewPurpose::Game)
+        {
+            chosen = &v;
+            break;
+        }
+        if (v.purpose == Rendering::ViewPurpose::EditorScene && !chosen)
+            chosen = &v;
+    }
+    if (!chosen)
+        return 0u;
+    const auto* camData = rs.Views().FindCameraData(chosen->cameraId);
+    if (!camData)
+        return 0u;
+    float camPos[3], camFwd[3], camUp[3], camRight[3];
+    ExtractCameraVectors(*camData, camPos, camFwd, camUp, camRight);
+    // The planet's centre sits planetRadius below the world origin, as in the sky shaders.
+    const double y = static_cast<double>(camPos[1]) + planetRadius;
+    const double r = std::sqrt(static_cast<double>(camPos[0]) * camPos[0] + y * y +
+                               static_cast<double>(camPos[2]) * camPos[2]);
+    return Rendering::SkyViewLutAltitudeBand(static_cast<float>(r - planetRadius));
 }
 
 void SkyRenderNode::EnsureDescriptorSetDescs(const Rendering::SkyRenderer::SkyBindingSlots& slots)
@@ -445,7 +472,7 @@ void SkyRenderNode::Declare(RenderPipelineInstance& instance, const PipelineDecl
     m_WarnedNoComponent = false;
 
     const auto& settings = sky.GetSettings();
-    if (IsHdriBackdropSky(settings) || IsGradientSky(settings))
+    if (ClassifySkyBackdrop(settings) != SkyBackdropKind::Atmosphere)
         return; // backdrop-only: the per-view draw samples the env texture / gradient directly
 
     auto& renderer = sky.GetRenderer();
@@ -458,10 +485,13 @@ void SkyRenderNode::Declare(RenderPipelineInstance& instance, const PipelineDecl
     // discardable (Common → Undefined first transition); computed LUTs are
     // sampled-persisted across frames. Dedup-by-handle makes the per-view
     // draw's re-imports land on these same ids.
-    const uint64_t digest = ComputeSkyViewLutInputDigest(settings);
+    const uint64_t digest = ComputeSkyLutSettingsDigest(settings);
+    Rendering::AtmosphereParametersGPU lutAtmosphere{};
+    FillAtmosphereFromSettings(settings, lutAtmosphere);
+    const uint32_t altitudeBand = SkyViewLutCameraBand(rs, ctx.Views, lutAtmosphere.planetRadius);
     const bool transCurrent = renderer.IsTransmittanceComputed();
     const bool multiscatterCurrent = renderer.IsMultiscatterCurrentFor(digest);
-    const bool skyViewCurrent = renderer.IsSkyViewLutCurrentFor(digest);
+    const bool skyViewCurrent = renderer.IsSkyViewLutCurrentFor(SkyViewLutDigest(digest, altitudeBand));
     const RenderGraph::RGTexture trans = ctx.Frame.ImportExternalTexture(
         "Sky_Transmittance_LUT", renderer.GetTransmittanceLutTexture(),
         transCurrent ? Rendering::ResourceState::ShaderResource
@@ -476,7 +506,8 @@ void SkyRenderNode::Declare(RenderPipelineInstance& instance, const PipelineDecl
                        : Rendering::ResourceState::Common);
 
     // Dirty gates AT DECLARATION (the activation predicates' immediate-mode
-    // form). Settings-only digests — never extend to camera/depth inputs.
+    // form). Settings digests, plus the sky-view LUT's altitude band; never
+    // extend to raw camera or depth inputs, which change every frame.
     auto* rendererPtr = &renderer;
     auto* skyPtr = &sky;
     if (!transCurrent)
@@ -567,7 +598,7 @@ void SkyRenderNode::Declare(RenderPipelineInstance& instance, const PipelineDecl
                 cl->Dispatch(DivCeil(cfg.multiscatterLutSize, kSkyComputeWorkgroupSize),
                              DivCeil(cfg.multiscatterLutSize, kSkyComputeWorkgroupSize), 1);
                 rendererPtr->MarkMultiscatterComputed(
-                    ComputeSkyViewLutInputDigest(skyPtr->GetSettings()));
+                    ComputeSkyLutSettingsDigest(skyPtr->GetSettings()));
             });
     }
     if (!skyViewCurrent)
@@ -580,7 +611,7 @@ void SkyRenderNode::Declare(RenderPipelineInstance& instance, const PipelineDecl
                 p.Read(multiscatter, RenderGraph::RGTextureRead::Sampled);
                 p.Write(skyView, RenderGraph::RGTextureWrite::Storage);
             },
-            [this, rendererPtr, skyPtr](RenderGraph::RGContext& c)
+            [this, rendererPtr, skyPtr, altitudeBand](RenderGraph::RGContext& c)
             {
                 auto* cl = c.Cmd;
                 auto* dev = c.GetDevice();
@@ -590,6 +621,8 @@ void SkyRenderNode::Declare(RenderPipelineInstance& instance, const PipelineDecl
                 const auto& s = skyPtr->GetSettings();
                 SkyUBOGPU skyUbo{};
                 FillSkyUBOFromSettings(s, skyUbo);
+                // The LUT is baked for a camera on the planet's +Y axis at the band's altitude.
+                skyUbo.cameraPosition[1] = Rendering::SkyViewLutBandAltitude(altitudeBand);
                 Rendering::AtmosphereParametersGPU atmo{};
                 FillAtmosphereFromSettings(s, atmo);
 
@@ -629,9 +662,20 @@ void SkyRenderNode::Declare(RenderPipelineInstance& instance, const PipelineDecl
                 cl->Dispatch(DivCeil(cfg.skyViewLutWidth, kSkyComputeWorkgroupSize),
                              DivCeil(cfg.skyViewLutHeight, kSkyComputeWorkgroupSize), 1);
                 rendererPtr->MarkSkyViewLutComputed(
-                    ComputeSkyViewLutInputDigest(skyPtr->GetSettings()));
+                    SkyViewLutDigest(ComputeSkyLutSettingsDigest(skyPtr->GetSettings()), altitudeBand));
             });
     }
+}
+
+Rendering::StarSparkleEnergy SkyRenderNode::StarSparkleEnergyFor(const Rendering::SkySettings& settings)
+{
+    const std::array<float, 3> inputs{settings.starDiamondShape, settings.starCoreSize, settings.starGlowFalloff};
+    if (inputs != m_StarSparkleEnergyInputs)
+    {
+        m_StarSparkleEnergyInputs = inputs;
+        m_StarSparkleEnergy = Rendering::ComputeStarSparkleEnergy(inputs[0], inputs[1], inputs[2]);
+    }
+    return m_StarSparkleEnergy;
 }
 
 void SkyRenderNode::DeclareForView(ViewDeclare& d)
@@ -639,12 +683,31 @@ void SkyRenderNode::DeclareForView(ViewDeclare& d)
     auto& rs = d.Services;
     auto* skyFeat = rs.GetFeature<SkyRenderFeature>();
     if (!skyFeat || !skyFeat->IsInitialized() || !skyFeat->HasActiveSettings())
+    {
+        // The name always resolves, so a pass reading the backdrop never declines for want of a
+        // sky; its readers learn there is none from their own sky settings check.
+        d.PublishTexture(Names::Res::SkyBackdrop,
+                         d.Frame.ImportExternalTexture("Sky_Backdrop_Absent",
+                                                       rs.Textures().GetDefaultBlackTexture(),
+                                                       Rendering::ResourceState::ShaderResource));
         return;
+    }
     auto& sky = *skyFeat;
     auto& renderer = sky.GetRenderer();
     EnsureDescriptorSetDescs(renderer.GetBindingSlots());
     const Rendering::ViewId viewId = d.View.id;
     const uint32_t viewKey = static_cast<uint32_t>(viewId);
+
+    const auto& settings = sky.GetSettings();
+    const Rendering::StarSparkleEnergy starEnergy = StarSparkleEnergyFor(settings);
+    const Rendering::TextureHandle skySourceTex = settings.environmentTexture.IsValid()
+                                                      ? settings.environmentTexture
+                                                      : renderer.GetSkyViewLutTexture();
+    // Dedup-by-handle lands these on the frame-scope Declare's ids when the
+    // LUT path is active; the HDRI env texture imports fresh as sampled.
+    const RenderGraph::RGTexture skySource = d.Frame.ImportExternalTexture(
+        "Sky_Backdrop_Source", skySourceTex, Rendering::ResourceState::ShaderResource);
+    d.PublishTexture(Names::Res::SkyBackdrop, skySource);
 
     const RenderGraph::RGTexture out = d.ResolveTexture(m_OutputRef);
     if (!out.IsValid())
@@ -653,15 +716,6 @@ void SkyRenderNode::DeclareForView(ViewDeclare& d)
     // AT DECLARATION: the world arm (later in blueprint order) reads this
     // when deciding Clear-vs-Load for its color attach.
     rs.Views().MarkViewSkyBackdropScheduled(viewId);
-
-    const auto& settings = sky.GetSettings();
-    const Rendering::TextureHandle skySourceTex = settings.environmentTexture.IsValid()
-                                                      ? settings.environmentTexture
-                                                      : renderer.GetSkyViewLutTexture();
-    // Dedup-by-handle lands these on the frame-scope Declare's ids when the
-    // LUT path is active; the HDRI env texture imports fresh as sampled.
-    const RenderGraph::RGTexture skySource = d.Frame.ImportExternalTexture(
-        "Sky_Backdrop_Source", skySourceTex, Rendering::ResourceState::ShaderResource);
     const RenderGraph::RGTexture trans = d.Frame.ImportExternalTexture(
         "Sky_Transmittance_LUT", renderer.GetTransmittanceLutTexture(),
         renderer.IsTransmittanceComputed() ? Rendering::ResourceState::ShaderResource
@@ -695,8 +749,8 @@ void SkyRenderNode::DeclareForView(ViewDeclare& d)
             p.Read(skySource, RenderGraph::RGTextureRead::Sampled);
             p.Read(trans, RenderGraph::RGTextureRead::Sampled);
         },
-        [this, rendererPtr, skyPtr, rsPtr, viewId, viewKey, vpX, vpY, vpW,
-         vpH](RenderGraph::RGContext& passCtx)
+        [this, rendererPtr, skyPtr, rsPtr, viewId, viewKey, vpX, vpY, vpW, vpH,
+         starEnergy](RenderGraph::RGContext& passCtx)
         {
             auto* cl = passCtx.Cmd;
             auto* dev = passCtx.GetDevice();
@@ -731,6 +785,8 @@ void SkyRenderNode::DeclareForView(ViewDeclare& d)
             const auto& settings = skyPtr->GetSettings();
             SkyUBOGPU skyUbo{};
             FillSkyUBOFromSettings(settings, skyUbo);
+            skyUbo.starTwinkleAmp[2] = starEnergy.GlowGain;
+            skyUbo.starTwinkleAmp[3] = starEnergy.SparkleGain;
             skyUbo.cameraPosition[0] = camPos[0];
             skyUbo.cameraPosition[1] = camPos[1];
             skyUbo.cameraPosition[2] = camPos[2];
@@ -793,7 +849,7 @@ void SkyRenderNode::DeclareForView(ViewDeclare& d)
             cl->BindDescriptorSet(0, ds, pipeVar);
             cl->Draw(3, 1);
 
-            if (IsHdriBackdropSky(settings) || IsGradientSky(settings))
+            if (ClassifySkyBackdrop(settings) != SkyBackdropKind::Atmosphere)
                 return;
 
             const float nightBlend = settings.nightSkyBlend;

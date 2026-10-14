@@ -471,7 +471,7 @@ static TransformFields ReadTransformFields(const ECS::World& world, ECS::EntityH
     if (const auto* t = world.GetComponent<Components::Transform>(entity))
     {
         const auto p = t->GetPosition();
-        const auto& r = t->GetRotation().GetGLM();
+        const auto r = t->GetRotation().GetGLM();
         const auto s = t->GetScale();
         fields.Position = {p.x, p.y, p.z};
         fields.Rotation = {r.x, r.y, r.z, r.w};
@@ -5703,6 +5703,32 @@ class ValueCurveSchema final : public ISceneComponentSchema
     }
 };
 
+// A look by its name (Components::kLookNames), matched without regard to case.
+static bool ParseLook(std::string_view value, Components::Look& out, std::string* outError)
+{
+    const std::string lowered = ToLowerAscii(value);
+    for (int32_t i = 0; i < Components::kLookCount; ++i)
+    {
+        if (lowered == ToLowerAscii(Components::kLookNames[i]))
+        {
+            out = static_cast<Components::Look>(i);
+            return true;
+        }
+    }
+    if (outError)
+    {
+        // The technique beside each name, because a technique name (ACES, AgX) is the likeliest
+        // wrong value: the previous operator list showed them.
+        using Components::Look;
+        using Components::LookName;
+        *outError = "'" + std::string(value) + "' is not a look; rendering " + std::string(LookName(Look::Neutral)) +
+                    ". Valid looks: " + std::string(LookName(Look::Neutral)) + ", " +
+                    std::string(LookName(Look::Filmic)) + " (ACES 2), " + std::string(LookName(Look::Photographic)) +
+                    " (AgX).";
+    }
+    return false;
+}
+
 class PostProcessVolumeSchema final : public ISceneComponentSchema
 {
   public:
@@ -5716,8 +5742,7 @@ class PostProcessVolumeSchema final : public ISceneComponentSchema
         outLines.push_back(std::string("PostProcessVolume.weight = ") + FormatFloat(c->Weight));
         outLines.push_back(std::string("PostProcessVolume.priority = ") + std::to_string(c->Priority));
         outLines.push_back(std::string("PostProcessVolume.postProcessMask = ") + std::to_string(c->PostProcessMask));
-        outLines.push_back(std::string("PostProcessVolume.tonemap = ") + std::to_string(static_cast<int32_t>(c->Tonemap)));
-        outLines.push_back(std::string("PostProcessVolume.ditherMode = ") + std::to_string(c->DitherMode));
+        outLines.push_back(std::string("PostProcessVolume.look = ") + std::string(Components::LookName(c->Look)));
         outLines.push_back(std::string("PostProcessVolume.ictcpChromaCompression = ") +
                            FormatFloat(c->IctcpChromaCompression));
         outLines.push_back(std::string("PostProcessVolume.isGlobal = ") + (c->IsGlobal ? "true" : "false"));
@@ -5747,15 +5772,6 @@ class PostProcessVolumeSchema final : public ISceneComponentSchema
         {
             if (!ParseU32(value, c.PostProcessMask, outError))
                 return false;
-        }
-        else if (property == "exposure" || property == "exposurecontrol" ||
-                 property == "manualexposureev" ||
-                 property == "aperture" || property == "shuttertime" || property == "iso" ||
-                 property == "autoexposurespeedup" || property == "autoexposurespeeddown")
-        {
-            // Exposure moved off the volume onto the camera (and the world default for camera-less
-            // views). Silently accept and drop the legacy owning-semantics keys so older scenes
-            // still load; the modifier-shaped keys below re-home onto ExposureAdjustmentEffect.
         }
         else if (property == "exposurecompensation" || property == "autoexposureminev" ||
                  property == "autoexposuremaxev")
@@ -5824,22 +5840,9 @@ class PostProcessVolumeSchema final : public ISceneComponentSchema
             world.AddComponentImmediate(entity, c);
             return true;
         }
-        else if (property == "tonemap")
+        else if (property == "look")
         {
-            int32_t v = 0;
-            if (!ParseI32(value, v, outError))
-                return false;
-            if (!Components::IsValidTonemapModeValue(v))
-            {
-                if (outError)
-                    *outError = "PostProcessVolume.tonemap out of range";
-                return false;
-            }
-            c.Tonemap = static_cast<Components::TonemapMode>(v);
-        }
-        else if (property == "dithermode")
-        {
-            if (!ParseI32(value, c.DitherMode, outError))
+            if (!ParseLook(value, c.Look, outError))
                 return false;
         }
         else if (property == "ictcpchromacompression")
@@ -6664,6 +6667,7 @@ class HeightFogEffectSchema final : public ISceneComponentSchema
         outLines.push_back(std::string("HeightFogEffect.horizonHeightBlendEnd = ") + FormatFloat(c->HorizonHeightBlendEnd));
         outLines.push_back(std::string("HeightFogEffect.axisMode = ") + std::to_string(static_cast<int32>(c->AxisMode)));
         outLines.push_back(std::string("HeightFogEffect.customAxis = ") + FormatFloat3(c->CustomAxis[0], c->CustomAxis[1], c->CustomAxis[2]));
+        outLines.push_back(std::string("HeightFogEffect.colorMode = ") + std::to_string(static_cast<int32>(c->ColorMode)));
         outLines.push_back(std::string("HeightFogEffect.emissive = ") + FormatFloat3(c->Emissive[0], c->Emissive[1], c->Emissive[2]));
         outLines.push_back(std::string("HeightFogEffect.gradientMode = ") + std::to_string(static_cast<int32>(c->GradientMode)));
         outLines.push_back(std::string("HeightFogEffect.gradientStrength = ") + FormatFloat(c->GradientStrength));
@@ -6819,6 +6823,20 @@ class HeightFogEffectSchema final : public ISceneComponentSchema
             c.CustomAxis[0] = v.X;
             c.CustomAxis[1] = v.Y;
             c.CustomAxis[2] = v.Z;
+        }
+        else if (property == "colormode")
+        {
+            int32 v = static_cast<int32>(c.ColorMode);
+            if (!ParseI32(value, v, outError))
+                return false;
+            if (v != static_cast<int32>(Components::HeightFogColorMode::FixedColor) &&
+                v != static_cast<int32>(Components::HeightFogColorMode::SkyHorizon))
+            {
+                if (outError)
+                    *outError = "HeightFogEffect.colorMode must be 0 (fixed color) or 1 (sky horizon)";
+                return false;
+            }
+            c.ColorMode = static_cast<Components::HeightFogColorMode>(v);
         }
         else if (property == "emissive")
         {

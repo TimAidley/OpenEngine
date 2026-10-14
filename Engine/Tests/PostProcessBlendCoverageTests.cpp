@@ -12,9 +12,10 @@
 #include "Components/Rendering/PostProcessEffects/HeightFogEffect.h"
 #include "Components/Rendering/PostProcessEffects/ScreenSpaceReflectionsEffect.h"
 #include "Components/Rendering/PostProcessEffects/VolumetricFogEffect.h"
-#include "Components/Rendering/TonemapMode.h"
+#include "Components/Rendering/Look.h"
 #include "Engine/Rendering/ColorGradeParamsUBO.h"
 #include "Rendering/Core/NamedPushConstantWriter.h"
+#include "Rendering/Passes/TonemapPass.h"
 #include "Rendering/Materials/ShaderMeta.h"
 #include "ECS/ComponentFactory.h"
 #include "ECS/ECSTemplates.h"
@@ -41,6 +42,7 @@
 
 using GameEngine::Engine::Renderer::BlendPostProcessSettings;
 using GameEngine::Engine::Renderer::PostProcessSettings;
+using GameEngine::Engine::Renderer::PostProcessViewOutput;
 using GameEngine::Engine::Renderer::SettingsBlendGroupMask;
 
 namespace
@@ -90,8 +92,8 @@ const std::unordered_set<std::string> kComputedReads = {
     "colorGradeActive", "hdrColorFxActive", "casActive", "lutActive",
     "ldrStackActive", "vhsActive", "chromaticAberrationActive", "filmSimulationGrainActive",
     "filmSimulationArtifactsActive", "crtActive", "fastBlurActive", "dofActive",
-    "heatDistortionActive", "heightFogActive", "volumetricFogActive", "atmosphericCloudActive",
-    "volumetricCloudsActive",
+    "heatDistortionActive", "heightFogActive", "heightFogSkyColorActive", "volumetricFogActive",
+    "atmosphericCloudActive", "volumetricCloudsActive",
     "bloomIntensity", "volumetricFogIntensity",
 };
 
@@ -158,8 +160,8 @@ TEST(PostProcessBlendCoverage, EveryReflectedFieldBlendsOrIsExcluded)
 // pin the migration: the exact name set cannot drift, and every registered
 // (name, offset, kind) triple must resolve the member TryReadField reports.
 
-// Golden set of every readable name, 303 in total: 44 computed gates (11 core +
-// 33 registered) + 257 shared members (16 core appendix + 241 registered) + 2
+// Golden set of every readable name, 302 in total: 45 computed gates (11 core +
+// 34 registered) + 255 shared members (15 core appendix + 240 registered) + 2
 // read-only aliases. A new effect field extends this list in the same change
 // that registers it; a missing name here means a registration line was lost,
 // not that the list is stale.
@@ -175,7 +177,7 @@ TEST(PostProcessSettingsWrite, ReadableFieldNamesMatchGoldenSet)
     "aoActive", "useAutoExposure", "colorFilterActive", "colorGradeActive",
     "hdrColorFxActive", "casActive", "lutActive", "ldrStackActive",
     "chromaticAberrationActive", "filmSimulationGrainActive", "filmSimulationArtifactsActive", "crtActive",
-    "fastBlurActive", "dofActive", "heatDistortionActive", "heightFogActive",
+    "fastBlurActive", "dofActive", "heatDistortionActive", "heightFogActive", "heightFogSkyColorActive",
     "volumetricFogActive", "atmosphericCloudActive", "volumetricCloudsActive", "exposure", "threshold",
     "knee", "bloomAntiFlicker", "intensity", "bloomScatteringAmount",
     "bloomTintR", "bloomTintG", "bloomTintB", "bloomRadius",
@@ -188,8 +190,8 @@ TEST(PostProcessSettingsWrite, ReadableFieldNamesMatchGoldenSet)
     "fogGlowThreshold", "fogGlowKnee", "fogGlowAntiFlicker", "fogGlowOctaves",
     "fogGlowScatter", "fogGlowFadeStart", "fogGlowFadeEnd", "fogGlowTintR",
     "fogGlowTintG", "fogGlowTintB", "halationIntensity", "halationRadius",
-    "halationTintR", "halationTintG", "halationTintB", "tonemapMode",
-    "ditherMode", "ictcpChromaCompression", "chromaticAberrationIntensity", "chromaticAberrationStartOffset", "chromaticAberrationSaturation",
+    "halationTintR", "halationTintG", "halationTintB", "look",
+    "ictcpChromaCompression", "chromaticAberrationIntensity", "chromaticAberrationStartOffset", "chromaticAberrationSaturation",
     "chromaticAberrationLongitudinal", "chromaticAberrationComa", "dofIntensity", "dofMaxRadius",
     "dofSamplingQuality", "dofDebugMode", "dofDebugAlpha", "dofFocusDistance",
     "dofFocalLengthMm", "dofAperture", "dofSensorHeightMm", "dofApertureBladeCount",
@@ -203,7 +205,7 @@ TEST(PostProcessSettingsWrite, ReadableFieldNamesMatchGoldenSet)
     "filmSimulationDustIntensity", "filmSimulationDustSize", "filmSimulationDustRandomSize", "filmSimulationGateWeaveEnabled",
     "filmSimulationGateWeaveHorizontal", "filmSimulationGateWeaveVertical", "filmSimulationGateWeaveRotation", "filmSimulationGateMask",
     "filmSimulationGateMaskFeather", "filmSimulationGateMaskRoundness", "colorFilterR", "colorFilterG",
-    "colorFilterB", "colorFilterIntensity", "colorFilterBlendMode", "colorFilterStackOrder",
+    "colorFilterB", "colorFilterIntensity", "colorFilterBlendMode",
     "casStrength", "casStackOrder", "lutIntensity", "lutStackOrder",
     "lutInputEncoding", "lutTextureFormat", "vignetteIntensity", "vignetteSmoothness",
     "vignetteRounded", "vignetteColorR", "vignetteColorG", "vignetteColorB",
@@ -312,14 +314,14 @@ TEST(PostProcessSettingsWrite, RegistryFieldsResolveDeclaredMembersByName)
             }
         });
 
-    // 257 shared members minus the 16 core/fog-glow appendix names
+    // 255 shared members minus the 15 core/fog-glow appendix names
     // (PP_CORE_SHARED_FIELDS in PostProcessSettings.cpp). The named
     // set is an on-disk/shader contract: it must not move without extending the
     // golden name list above.
-    EXPECT_EQ(namedCount, 241u);
-    // Blend-only members (Phase 2): 2 bloom + 40 height fog + 62 volumetric fog
+    EXPECT_EQ(namedCount, 240u);
+    // Blend-only members (Phase 2): 2 bloom + 41 height fog + 62 volumetric fog
     // + 1 deband + 3 AO + 7 SSSR + 3 exposure adjustment + 35 volumetric clouds.
-    EXPECT_EQ(blendOnlyCount, 153u);
+    EXPECT_EQ(blendOnlyCount, 154u);
 }
 
 // Every gate an effect registers is readable by name, listed once, and reads
@@ -355,8 +357,8 @@ TEST(PostProcessSettingsWrite, RegistryGatesReadTheirPredicatesByName)
             }
         });
 
-    // 44 gates in total: 33 decided by one effect, 11 in the core table.
-    EXPECT_EQ(gateCount, 33u);
+    // 45 gates in total: 34 decided by one effect, 11 in the core table.
+    EXPECT_EQ(gateCount, 34u);
     EXPECT_EQ(R::PostProcessEffectRegistry::FindGate("fogGlowActive"), nullptr)
         << "a gate combining effects belongs in the core table, not one effect's registration";
 }
@@ -1262,20 +1264,19 @@ TEST(PostProcessAtmosphericCloudControls, AuthoredColorOwnsHueAndOpacityControls
         << "Beer-Lambert transmittance must not be alpha-composited a second time";
 }
 
-TEST(PostProcessTonemapControls, ExposesReferenceOperators)
+TEST(PostProcessTonemapControls, ExposesTheThreeLooks)
 {
-    using GameEngine::Components::TonemapMode;
-    EXPECT_EQ(static_cast<int32_t>(TonemapMode::GranTurismo7), 6);
-    EXPECT_EQ(static_cast<int32_t>(TonemapMode::ACES2), 7);
-    EXPECT_EQ(GameEngine::Components::kTonemapModeCount, 8);
-    // Display names carry the operator's published provenance, so the label is
-    // the pinned surface: the enumerator names stay bare (Neutral,
-    // GranTurismo7) and only what the inspector shows spells out the source.
-    EXPECT_STREQ(GameEngine::Components::kTonemapModeNames[4], "Khronos PBR Neutral");
-    EXPECT_STREQ(GameEngine::Components::kTonemapModeNames[6], "ICtCp Tonemapper (2025, GT7)");
-    EXPECT_STREQ(GameEngine::Components::kTonemapModeNames[7], "ACES 2");
-    EXPECT_TRUE(GameEngine::Components::IsValidTonemapModeValue(6));
-    EXPECT_TRUE(GameEngine::Components::IsValidTonemapModeValue(7));
+    using GameEngine::Components::Look;
+    EXPECT_EQ(static_cast<int32_t>(Look::Neutral), 0);
+    EXPECT_EQ(static_cast<int32_t>(Look::Filmic), 1);
+    EXPECT_EQ(static_cast<int32_t>(Look::Photographic), 2);
+    EXPECT_EQ(GameEngine::Components::kLookCount, 3);
+    // The names are the scene format and the inspector's labels: no label names a technique.
+    EXPECT_EQ(GameEngine::Components::LookName(Look::Neutral), "Neutral");
+    EXPECT_EQ(GameEngine::Components::LookName(Look::Filmic), "Filmic");
+    EXPECT_EQ(GameEngine::Components::LookName(Look::Photographic), "Photographic");
+    EXPECT_EQ(GameEngine::Rendering::Passes::kTonemapNoLookArm, GameEngine::Components::kLookCount)
+        << "the no-look debug arm sits past the looks, so no volume value can select it";
 
     const std::filesystem::path shaderRoot =
         std::filesystem::path(GE_RENDERER_REPO_ROOT) /
@@ -1288,25 +1289,18 @@ TEST(PostProcessTonemapControls, ExposesReferenceOperators)
     };
 
     const std::string tonemap = readText(shaderRoot / "tonemap.frag");
-    const std::string gt7 = readText(shaderRoot / "Includes/tonemap_gt7.glsl");
     const std::string aces2 = readText(shaderRoot / "Includes/tonemap_aces2.glsl");
     const std::string aces2Tables =
         readText(shaderRoot / "Includes/tonemap_aces2_tables.glsl");
 
-    EXPECT_NE(tonemap.find("case 6:  return TonemapGranTurismo7(hdr)"),
+    EXPECT_NE(tonemap.find("case kLookFilmic: return TonemapACES2(hdr, Aces2TargetOutputMax())"),
               std::string::npos);
-    EXPECT_NE(tonemap.find("case 7:  return TonemapACES2(hdr, Aces2TargetOutputMax())"),
-              std::string::npos);
-    // ACES 2 is peak-parameterised: it routes display-referred (clamped, never
-    // extended) so its tier ladder owns the headroom rendering.
-    EXPECT_NE(tonemap.find("if (pc.tonemapMode == 7)\n        return min(sdrTonemapped, vec3(outputMax))"),
-              std::string::npos);
-    // GT7 must remain the published 2025 ICtCp operator, not the older GT Sport
-    // curve commonly distributed online under the generic Gran Turismo name.
-    EXPECT_NE(gt7.find("GT7RgbToICtCp"), std::string::npos);
-    EXPECT_NE(gt7.find("sourceICtCp.yz * chromaScale"), std::string::npos);
-    EXPECT_NE(gt7.find("mix(skewedRgb, scaledRgb, 0.6)"), std::string::npos);
-    EXPECT_NE(gt7.find("Copyright (c) 2025 Polyphony Digital Inc."),
+    EXPECT_NE(tonemap.find("case 2:           return TonemapAgX(hdr)"), std::string::npos);
+    EXPECT_NE(tonemap.find("const int kLookFilmic = 1;"), std::string::npos);
+    EXPECT_NE(tonemap.find("const int kNoLookArm = 3;"), std::string::npos);
+    // Filmic (ACES 2) is peak-parameterised: it routes display-referred (clamped,
+    // never extended) so its tier ladder owns the headroom rendering.
+    EXPECT_NE(tonemap.find("if (pc.look == kLookFilmic)\n        return min(sdrTonemapped, vec3(outputMax))"),
               std::string::npos);
 
     // ACES 2's reference transform includes CAM/JMh tone scaling, chroma
@@ -1711,8 +1705,7 @@ using GameEngine::uint64;
     X(HalationTintR) \
     X(HalationTintG) \
     X(HalationTintB) \
-    X(TonemapMode) \
-    X(DitherMode) \
+    X(Look) \
     X(IctcpChromaCompression) \
     X(ChromaticAberrationIntensity) \
     X(ChromaticAberrationStartOffset) \
@@ -1773,7 +1766,6 @@ using GameEngine::uint64;
     X(ColorFilterB) \
     X(ColorFilterIntensity) \
     X(ColorFilterBlendMode) \
-    X(ColorFilterStackOrder) \
     X(CasStrength) \
     X(CasStackOrder) \
     X(LutIntensity) \
@@ -1922,6 +1914,7 @@ using GameEngine::uint64;
     X(HeightFogUseTimeOfDay) \
     X(HeightFogSkyHorizonOffset) \
     X(HeightFogSkyBottomStrength) \
+    X(HeightFogColorMode) \
     X(ColorGradeShadowsR) \
     X(ColorGradeShadowsG) \
     X(ColorGradeShadowsB) \
@@ -2094,7 +2087,8 @@ using GameEngine::uint64;
     X(ExposureCompensationEv) \
     X(ExposureClampMinEv) \
     X(ExposureClampMaxEv) \
-    X(BloomOctaveBlend)
+    X(BloomOctaveBlend) \
+    X(ViewOutput)
 
 // Keep this inventory order stable when extending it: randomized input values
 // depend on ordinal, so appending fields preserves existing per-field goldens.
@@ -2136,11 +2130,11 @@ constexpr std::size_t kTailPad = sizeof(PostProcessSettings) -
 // member appended after the anchor it is measured from.
 static_assert(kPadAfterAutoExposureActive == 3, "layout moved: re-derive the pad pins");
 static_assert(kPadBeforeBloomDirtGuid == 0, "layout moved: re-derive the pad pins");
-static_assert(kPadBeforeLutGuid == 0, "layout moved: re-derive the pad pins");
-// The current layout ends 4 bytes short of its 8-byte boundary (the 8-aligned GUID
-// word arrays set the struct's alignment), so the tail pad is 4. Pinning it still
-// ensures an appended member cannot be silently absorbed by an ABI alignment hole.
-static_assert(kTailPad == 4, "layout moved: extend PP_BLEND_LOCK_FIELDS and re-derive the pad pins");
+static_assert(kPadBeforeLutGuid == 4, "layout moved: re-derive the pad pins");
+// The current layout ends on its 8-byte boundary (the 8-aligned GUID word arrays
+// set the struct's alignment), so the tail pad is 0. Pinning it still ensures an
+// appended member cannot be silently absorbed by an ABI alignment hole.
+static_assert(kTailPad == 0, "layout moved: extend PP_BLEND_LOCK_FIELDS and re-derive the pad pins");
 static_assert(kFieldBytes + kPadAfterAutoExposureActive + kPadBeforeBloomDirtGuid +
                   kPadBeforeLutGuid + kTailPad == sizeof(PostProcessSettings),
               "PP_BLEND_LOCK_FIELDS is stale: a PostProcessSettings member is missing from the equivalence lock");
@@ -2181,6 +2175,10 @@ inline void FillValue(float32& v, LockRng& r)
 }
 inline void FillValue(int32& v, LockRng& r) { v = static_cast<int32>(r.Next() % 9u) - 4; }
 inline void FillValue(bool& v, LockRng& r) { v = (r.Next() & 1u) != 0u; }
+inline void FillValue(PostProcessViewOutput& v, LockRng& r)
+{
+    v = static_cast<PostProcessViewOutput>(r.Next() & 1u);
+}
 inline void FillValue(uint64 (&v)[2], LockRng& r)
 {
     v[0] = (static_cast<uint64>(r.Next()) << 32) | r.Next();
@@ -2451,6 +2449,7 @@ void RefCopyHeightFogFields(PostProcessSettings& dst, const PostProcessSettings&
     dst.HeightFogUseTimeOfDay = src.HeightFogUseTimeOfDay;
     dst.HeightFogSkyHorizonOffset = src.HeightFogSkyHorizonOffset;
     dst.HeightFogSkyBottomStrength = src.HeightFogSkyBottomStrength;
+    dst.HeightFogColorMode = src.HeightFogColorMode;
 }
 
 void RefCopyAtmosphericCloudFields(PostProcessSettings& dst, const PostProcessSettings& src)
@@ -2616,8 +2615,7 @@ PostProcessSettings BlendReference(
     out.ExposureClampMaxEv     = lerp(a.ExposureClampMaxEv, b.ExposureClampMaxEv, w);
     // Discrete settings: use B when weight >= 0.5 (highest priority wins)
     out.AutoExposureActive = (w >= 0.5f) ? b.AutoExposureActive : a.AutoExposureActive;
-    out.TonemapMode    = (w >= 0.5f) ? b.TonemapMode : a.TonemapMode;
-    out.DitherMode     = (w >= 0.5f) ? b.DitherMode : a.DitherMode;
+    out.Look           = (w >= 0.5f) ? b.Look : a.Look;
     out.IctcpChromaCompression = lerp(a.IctcpChromaCompression, b.IctcpChromaCompression, w);
     out.ChromaticAberrationIntensity = lerp(a.ChromaticAberrationIntensity, b.ChromaticAberrationIntensity, w);
     out.ChromaticAberrationStartOffset = lerp(a.ChromaticAberrationStartOffset, b.ChromaticAberrationStartOffset, w);
@@ -2675,7 +2673,6 @@ PostProcessSettings BlendReference(
     out.ColorFilterB         = lerp(a.ColorFilterB,         b.ColorFilterB,         w);
     out.ColorFilterIntensity = lerp(a.ColorFilterIntensity, b.ColorFilterIntensity, w);
     out.ColorFilterBlendMode = (w >= 0.5f) ? b.ColorFilterBlendMode : a.ColorFilterBlendMode;
-    out.ColorFilterStackOrder = (w >= 0.5f) ? b.ColorFilterStackOrder : a.ColorFilterStackOrder;
     out.CasStrength          = lerp(a.CasStrength,          b.CasStrength,          w);
     out.CasStackOrder        = (w >= 0.5f) ? b.CasStackOrder : a.CasStackOrder;
     out.LutIntensity         = lerp(a.LutIntensity,         b.LutIntensity,         w);
@@ -2846,6 +2843,7 @@ PostProcessSettings BlendReference(
     out.HeightFogUseTimeOfDay = (w >= 0.5f) ? b.HeightFogUseTimeOfDay : a.HeightFogUseTimeOfDay;
     out.HeightFogSkyHorizonOffset = lerp(a.HeightFogSkyHorizonOffset, b.HeightFogSkyHorizonOffset, w);
     out.HeightFogSkyBottomStrength = lerp(a.HeightFogSkyBottomStrength, b.HeightFogSkyBottomStrength, w);
+    out.HeightFogColorMode = (w >= 0.5f) ? b.HeightFogColorMode : a.HeightFogColorMode;
     out.VolumetricFogIntensity         = lerp(a.VolumetricFogIntensity, b.VolumetricFogIntensity, w);
     out.VolumetricFogIsGlobal          = (w >= 0.5f) ? b.VolumetricFogIsGlobal : a.VolumetricFogIsGlobal;
     out.VolumetricFogVolumeShape       = (w >= 0.5f) ? b.VolumetricFogVolumeShape : a.VolumetricFogVolumeShape;
@@ -3444,6 +3442,12 @@ bool BlendsExactly(int32 out, int32 x, int32 y, float, int32 dflt)
 }
 
 bool BlendsExactly(bool out, bool x, bool y, float, bool dflt)
+{
+    return out == x || out == y || out == dflt;
+}
+
+bool BlendsExactly(PostProcessViewOutput out, PostProcessViewOutput x, PostProcessViewOutput y, float,
+                   PostProcessViewOutput dflt)
 {
     return out == x || out == y || out == dflt;
 }

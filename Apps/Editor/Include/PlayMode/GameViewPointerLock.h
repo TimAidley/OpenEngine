@@ -12,12 +12,9 @@ class Window;
 namespace GameEngine::Editor
 {
 
-/// Grants the game's pointer lock request (Input::InputSystem::RequestPointerLock)
-/// inside the editor. The pointer is locked to the window whose Game View is the
-/// active tab while play runs unpaused, that window has focus and the game asks.
-/// Escape hands the pointer back to the editor without taking the key from the
-/// game, and a press on the Game View returns it to the game. The game reads the
-/// outcome from Input::InputSystem::IsPointerLocked.
+/// Grants the game's pointer lock request (Input::InputSystem::LockPointer)
+/// inside the editor, and applies the outcome to the platform window. The game
+/// reads the outcome from Input::InputSystem::GetPointerLockState.
 class GameViewPointerLock
 {
   public:
@@ -38,10 +35,13 @@ class GameViewPointerLock
     bool IsLockedTo(const Platform::Window* window) const;
 
   private:
+    // Null while unlocked: the rule's Locked state is m_LockedWindow != nullptr.
     Platform::Window* m_LockedWindow = nullptr;
-    // Escape gave the pointer to the editor; the game's request waits for a press
-    // on the Game View.
+    // The pointer was handed back to the editor while the game still asks.
     bool m_HandedBack = false;
+    // Events since the last Update, read by the next one.
+    bool m_EscapePressed = false;
+    bool m_GameViewPressed = false;
 };
 
 } // namespace GameEngine::Editor

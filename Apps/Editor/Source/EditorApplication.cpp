@@ -193,6 +193,7 @@
 #include "Panels/BuildPanel.h"
 #include "Panels/BuiltInPanelTypes.h"
 #include "SceneView/GizmoSettingsWiring.h"
+#include "SceneView/MountedViewPanels.h"
 #include "SceneView/EditorSceneViewDropWiring.h"
 #include "SceneView/SceneViewEntityLinks.h"
 #include "SceneView/SceneViewRenderCoordinator.h"
@@ -257,6 +258,7 @@
 #include "Editor/Registries/EditorPanelRegistry.h"
 #include "Editor/Registries/EditorPluginRegistry.h"
 #include "Editor/Registries/EditorSceneCommands.h"
+#include "Editor/Registries/MarkupActionRegistry.h"
 #include "Editor/Vcs/EditorVcsProviderRegistry.h"
 #include "Picking/EditorPickProviders.h"
 #include "Platform/ContextMenu.h"
@@ -339,7 +341,7 @@ bool IsFocusInTextField(UIManager* ui)
     if (focusId.empty()) return false;
     UIElement* root = ui->GetRootElement();
     if (!root) return false;
-    for (UIElement* el = root->FindById(focusId); el; el = el->GetParent())
+    for (UIElement* el = root->FindById(HashStringId(focusId)); el; el = el->GetParent())
     {
         if (dynamic_cast<TextField*>(el) || dynamic_cast<TextArea*>(el))
             return true;
@@ -601,7 +603,7 @@ void ApplySavedAccentStyle(UIManager* ui)
     // Forward accent color to dock overlays
     if (auto* root = ui->GetRootElement())
     {
-        if (auto* ds = dynamic_cast<DockspaceElement*>(root->FindById("dock")))
+        if (auto* ds = dynamic_cast<DockspaceElement*>(root->FindById("dock"_sid)))
             ds->SetAccentColor(accentColor);
     }
 }
@@ -912,23 +914,6 @@ static bool BeginWindowRenderFrame(EditorApplication::EditorWindowContext* ctx,
 
     ++ctx->deviceFrameStamp; // RenderGraph BeginFrame pairing tripwire (see header)
     return true;
-}
-
-template <typename TPanel>
-static TPanel* ResolveMountedPanelForWindow(EditorApplication::EditorWindowContext* ctx, const char* mountId)
-{
-    if (!ctx || !ctx->ui || !mountId)
-        return nullptr;
-
-    UIElement* root = ctx->ui->GetRootElement();
-    if (!root)
-        return nullptr;
-
-    if (auto* mount = dynamic_cast<Mount*>(root->FindById(mountId)))
-    {
-        return dynamic_cast<TPanel*>(mount->GetTarget());
-    }
-    return nullptr;
 }
 
 // 7f post-spine bind: re-point "game_main" + the game viewport element at the
@@ -1490,6 +1475,7 @@ EditorApplication::EditorApplication(const ApplicationConfig& config)
         return (!m_Windows.empty() && m_Windows[0]->scene) ? m_Windows[0]->scene.get() : nullptr;
     });
     m_MarkupBridge->SetPlayModeProvider([this]() { return m_PlayMode && m_PlayMode->IsPlayingOrPaused(); });
+    m_MarkupBridge->SetUndoService(m_UndoRedo.get());
     Editor::InstallSceneViewEntityLinks([this]() -> SceneViewController* {
         return !m_Windows.empty() ? m_Windows[0]->scene.get() : nullptr;
     });
@@ -1503,7 +1489,7 @@ EditorApplication::EditorApplication(const ApplicationConfig& config)
     // The untitled-scene save prompt waits for the picker to close and for a
     // queued startup scene to be requested.
     m_SceneEditor->SetBootFlowActiveProbe(
-        [this]() { return ShouldIdleWorldPathForProjectPicker() || !m_DeferredStartupScene.empty(); });
+        [this]() { return ShouldIdleWorldPathForProjectPicker() || !m_DeferredStartupSceneWorkspace.empty(); });
     // The recipe controllers' generated entities are scoped to the open scene
     // (RecipeControllers::ReleaseSceneScoped). Release them at the swap, while the
     // outgoing world is still the one they describe. Wired here rather than at the
@@ -2507,6 +2493,7 @@ bool EditorApplication::Initialize()
     DeviceDesc desc{};
     desc.preferredAPI = LoadPreferredGraphicsApi();
     desc.enableSwapchain = true;
+    desc.persistPipelineCache = true;
     desc.applicationName = GetConfig().Name;
     if (Engine::Renderer::ShouldEnableVkValidation())
     {
@@ -3133,7 +3120,7 @@ bool EditorApplication::Initialize()
         DockspaceElement* dockspaceForConfig = nullptr;
         if (auto* rootEl = main->ui->GetRootElement())
         {
-            if (auto* el = rootEl->FindById("dock"))
+            if (auto* el = rootEl->FindById("dock"_sid))
             {
                 dockspaceForConfig = dynamic_cast<DockspaceElement*>(el);
             }
@@ -3931,7 +3918,7 @@ bool EditorApplication::Initialize()
         // Defer to Update() so we never rebuild dockspace during native/menu callbacks.
         if (assetsPanel)
         {
-            assetsPanel->SetOnAddToBookmarks([this, bookmarksPanel](const std::vector<std::filesystem::path>& paths)
+            assetsPanel->SetOnAddToBookmarks([bookmarksPanel](const std::vector<std::filesystem::path>& paths)
             {
                 if (!bookmarksPanel || paths.empty())
                     return;
@@ -4118,7 +4105,7 @@ bool EditorApplication::Initialize()
         bool dockBound = false;
         if (auto* rootEl = main->ui->GetRootElement())
         {
-            if (auto* el = rootEl->FindById("dock"))
+            if (auto* el = rootEl->FindById("dock"_sid))
             {
                 if (auto* dock = dynamic_cast<DockspaceElement*>(el))
                 {
@@ -4472,7 +4459,7 @@ bool EditorApplication::Initialize()
                     if (!m_TopToolbar)
                     {
                         m_TopToolbar =
-                            dynamic_cast<EditorTopToolbar*>(rootEl->FindById("EditorTopToolbar"));
+                            dynamic_cast<EditorTopToolbar*>(rootEl->FindById("EditorTopToolbar"_sid));
                         if (!m_TopToolbar)
                         {
                             auto toolbar = std::make_unique<EditorTopToolbar>();
@@ -4796,7 +4783,7 @@ bool EditorApplication::Initialize()
                         }
 
                         // Wire TopToolbarRight2 (info icon) to open the intro video.
-                        if (auto* infoBtn = dynamic_cast<Button*>(rootEl->FindById("TopToolbarRight2")))
+                        if (auto* infoBtn = dynamic_cast<Button*>(rootEl->FindById("TopToolbarRight2"_sid)))
                         {
                             infoBtn->SetTooltip("Info");
                             infoBtn->RegisterEventHandler(kEventButtonClick, [this](UIEvent&)
@@ -4845,10 +4832,10 @@ bool EditorApplication::Initialize()
                                 if (panelMgr && main)
                                     panelMgr->ShowOrActivateSettingsPanelToCategory(main, SettingsCategory::GridAndSnapping);
                             });
-                            // The auto-exposure toggle seeds Fixed EV100 (AE-lock); an open
+                            // A switch to Fixed exposure seeds Fixed EV100 (AE-lock); an open
                             // camera popup must pick up the seeded value or its stale field
                             // would clobber the seed.
-                            toolbar->SetOnPostFxAutoExposureToggled([sceneViewPanelPtr]() {
+                            toolbar->SetOnExposureModeChanged([sceneViewPanelPtr]() {
                                 if (sceneViewPanelPtr)
                                     sceneViewPanelPtr->SyncCameraSettingsPopupFromSettings();
                             });
@@ -5222,7 +5209,7 @@ void EditorApplication::ConsumePackagePanelDescriptor(const Editor::EditorPanelD
     if ((previous || inCurrentLayout) && !m_Windows.empty() && m_Windows[0] && m_Windows[0]->ui)
     {
         if (UIElement* rootEl = m_Windows[0]->ui->GetRootElement())
-            if (auto* dockspace = dynamic_cast<DockspaceElement*>(rootEl->FindById("dock")))
+            if (auto* dockspace = dynamic_cast<DockspaceElement*>(rootEl->FindById("dock"_sid)))
                 dockspace->RequestRebuildFromModel();
     }
 
@@ -5772,7 +5759,7 @@ void EditorApplication::WireNativeScriptingForProject(const std::filesystem::pat
         UIElement* root = m_Windows[0]->ui->GetRootElement();
         if (!root)
             return;
-        auto* label = dynamic_cast<Label*>(root->FindById("NativeScriptStatus"));
+        auto* label = dynamic_cast<Label*>(root->FindById("NativeScriptStatus"_sid));
         if (!label)
             return;
         label->RemoveClass("is-building");
@@ -5835,6 +5822,7 @@ void EditorApplication::WireNativeScriptingForProject(const std::filesystem::pat
             Editor::EditorVcsProviderRegistry::Get().AppendModulePins(moduleId, pins);
             InspectorRegistry::Get().AppendModulePins(moduleId, pins);
             Editor::DebugRequestGateRegistry::Get().AppendModulePins(moduleId, pins);
+            Editor::MarkupActionRegistry::Get().AppendModulePins(moduleId, pins);
             if (pins.empty())
                 return "no stamped editor-registry entries (module code may still be referenced "
                        "by live UI)";
@@ -6544,7 +6532,7 @@ void EditorApplication::Update(float64 deltaTime)
             // Vulkan validation badge: empty (invisible) at zero errors, so only count edges matter.
             if (UIElement* root = m_Windows[0]->ui->GetRootElement())
             {
-                if (auto* label = dynamic_cast<Label*>(root->FindById("VkValidationStatus")))
+                if (auto* label = dynamic_cast<Label*>(root->FindById("VkValidationStatus"_sid)))
                 {
                     m_ValidationBadgeErrors = errors;
                     label->SetText(errors > 0 ? "VK validation: " + std::to_string(errors) : "");
@@ -6564,7 +6552,7 @@ void EditorApplication::Update(float64 deltaTime)
             {
                 if (UIElement* root = m_Windows[0]->ui->GetRootElement())
                 {
-                    if (auto* label = dynamic_cast<Label*>(root->FindById("BuildConfigStatus")))
+                    if (auto* label = dynamic_cast<Label*>(root->FindById("BuildConfigStatus"_sid)))
                         label->SetText(Editor::BuildConfigStatusText());
                     m_BuildConfigTagTreeGeneration = treeGen;
                 }
@@ -6653,9 +6641,7 @@ void EditorApplication::Update(float64 deltaTime)
 
                     // Keep the panel's temporary yaw/pitch in sync so the next
                     // input tick does not overwrite the restored camera orientation.
-                    if (SceneViewPanel* svPanel = ResolveMountedPanelForWindow<SceneViewPanel>(
-                            targetWindow,
-                            EditorPanelIds::MountSceneView))
+                    if (SceneViewPanel* svPanel = Editor::MountedViewPanels::SceneView(targetWindow->ui.get()))
                     {
                         svPanel->SetYawPitch(pose.YawDeg, pose.PitchDeg);
                     }
@@ -7382,7 +7368,7 @@ bool EditorApplication::TryInterceptQuitForDirtyScene()
        Each step calls the next only when the user saves or discards. */
     auto doQuit = [this]() { RequestExit(); };
 
-    auto checkScript = [this, sePanel, scriptDirty, doQuit]()
+    auto checkScript = [sePanel, scriptDirty, doQuit]()
     {
         if (scriptDirty && sePanel)
             sePanel->PromptSaveBeforeQuit(doQuit);
@@ -7755,7 +7741,7 @@ bool EditorApplication::InvokeUiReplayCommand(std::uint32_t commandId, std::stri
                 return false;
             }
             const std::string mountId = std::string("mount:") + panelId;
-            auto* mount = dynamic_cast<Mount*>(rootEl->FindById(mountId));
+            auto* mount = dynamic_cast<Mount*>(rootEl->FindById(HashStringId(mountId)));
             if (!mount || !mount->GetTarget())
             {
                 if (outDetail)
@@ -7802,13 +7788,13 @@ bool EditorApplication::InvokeUiReplayCommand(std::uint32_t commandId, std::stri
             }
             else if (std::strcmp(panelId, EditorPanelIds::Assets) == 0)
             {
-                if (!panelRoot->FindById("assets-tree"))
+                if (!panelRoot->FindById("assets-tree"_sid))
                 {
                     if (outDetail)
                         *outDetail = "assets tree element missing";
                     return false;
                 }
-                if (!panelRoot->FindById("assets-views-container"))
+                if (!panelRoot->FindById("assets-views-container"_sid))
                 {
                     if (outDetail)
                         *outDetail = "assets views container missing";
@@ -8074,7 +8060,7 @@ void EditorApplication::Render()
         {
             if (UIElement* root = ctx->ui->GetRootElement())
             {
-                if (auto* dsEl = dynamic_cast<DockspaceElement*>(root->FindById("dock")))
+                if (auto* dsEl = dynamic_cast<DockspaceElement*>(root->FindById("dock"_sid)))
                 {
                     DockDropTarget dt;
                     dt.Kind = DockDropTarget::TargetKind::None; // debug only
@@ -8429,7 +8415,7 @@ void EditorApplication::OnShutdown()
     // Stop centralized file watching BEFORE any teardown at all. Watcher
     // threads dispatch subscription callbacks that post into UI elements (the
     // Assets browser posts grid refreshes from file events) and into ECS
-    // systems (NavigationBuildSystem marks navigation assets dirty);
+    // systems (NavigationSurfaceSystem marks grid surfaces for a re-bake);
     // StopWatching joins those threads, so after this point no callback can
     // land on state the teardown below destroys. Debounced events make this
     // window real: files the editor itself writes at exit (.Editor state,
@@ -8701,8 +8687,7 @@ EditorApplication::RenderWindowFrameResult EditorApplication::RenderWindowFrame(
     const bool idleWorldForPicker = m_WorldPathIdledForProjectPicker;
     routing.rg2Scene = useRGFrame && ctx->RenderGraphStream.Frame && ctx->scene != nullptr && !idleWorldForPicker;
     routing.gvPanel =
-        ctx->gameView ? ResolveMountedPanelForWindow<GameViewPanel>(ctx, EditorPanelIds::MountGameView)
-                      : nullptr;
+        ctx->gameView ? Editor::MountedViewPanels::GameView(ctx->ui.get()) : nullptr;
     // An inactive dock tab's panel is unmounted, but its viewport element keeps
     // the layout box from its last visible frame — the mounted resolve, not the
     // size probe, is what says the tab is actually on screen. The unmounted
@@ -8740,8 +8725,7 @@ EditorApplication::RenderWindowFrameResult EditorApplication::RenderWindowFrame(
             // already has a complete frame to present if input arrives after
             // extraction. The inactive Game panel has no measured viewport yet;
             // the visible Scene viewport is the closest matching content extent.
-            if (auto* scenePanel = ResolveMountedPanelForWindow<SceneViewPanel>(
-                    ctx, EditorPanelIds::MountSceneView))
+            if (auto* scenePanel = Editor::MountedViewPanels::SceneView(ctx->ui.get()))
             {
                 (void)Editor::SceneViewRenderCoordinator::TryResolveRenderableViewportSize(
                     ctx, scenePanel->GetViewportElement(), routing.gvW, routing.gvH);
@@ -9002,8 +8986,8 @@ EditorApplication::RenderWindowFrameResult EditorApplication::RenderWindowFrame(
         // JobSystem; here (engine layer) it is backed by WorkStealingThreadPool::Run
         // + a participating Wait (never ParallelFor — §A2.4-D3). Inert unless
         // GE_PARALLEL_RECORD is set (RecordAndSubmit gates on the env kill switch).
-        // Native external waiters park while workers record the interiors;
-        // a host thread that cannot block participates in this tagged counter.
+        // The frame thread's Wait participates: it records interiors itself
+        // beside the workers until none is left to claim.
         frame.SetRecordParallel(
             [](uint32_t count, const std::function<void(uint32_t)>& body)
             {
@@ -9342,7 +9326,7 @@ void EditorApplication::ShowTabContextMenu(const std::string& panelId, float x, 
             if (!w->floatingPanelId.empty())
                 floatingCtx = w.get();
             if (UIElement* rootEl = w->ui->GetRootElement())
-                dockspace = dynamic_cast<DockspaceElement*>(rootEl->FindById("dock"));
+                dockspace = dynamic_cast<DockspaceElement*>(rootEl->FindById("dock"_sid));
             break;
         }
     }
@@ -9444,7 +9428,7 @@ void EditorApplication::ResetLayoutToDefault()
 
     if (auto* rootEl = main->ui->GetRootElement())
     {
-        if (auto* el = rootEl->FindById("dock"))
+        if (auto* el = rootEl->FindById("dock"_sid))
         {
             if (auto* ds = dynamic_cast<DockspaceElement*>(el))
             {

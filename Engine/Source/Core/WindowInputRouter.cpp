@@ -152,18 +152,13 @@ void WindowInputRouter::RouteMouseMove(const WindowInputRouterConfig& config, Pl
                                                           ? config.getPlaySurface()
                                                           : WindowInputRouterConfig::PlaySurface{};
     // A locked pointer's position runs on past the window and is no place on
-    // screen, so only gameplay hears it. It is still mapped into the surface's
-    // pixels, so the game's mouse delta keeps one scale locked or not.
+    // screen, so only gameplay hears it, in the window's client units: the
+    // surface mapping would scale the game's mouse delta by the editor's UI
+    // scale, and the Player delivers client units too, so the two agree.
     if (play.pointerLocked)
     {
-        Input::IRawInputSink* sink = LockedPointerSink(config, play);
-        if (!sink)
-            return;
-        float playX = clientX;
-        float playY = clientY;
-        if (play.gameplaySink && play.mapGameplayPointer)
-            play.mapGameplayPointer(clientX, clientY, playX, playY);
-        sink->OnMouseMove({playX, playY});
+        if (Input::IRawInputSink* sink = LockedPointerSink(config, play))
+            sink->OnMouseMove({clientX, clientY});
         return;
     }
 

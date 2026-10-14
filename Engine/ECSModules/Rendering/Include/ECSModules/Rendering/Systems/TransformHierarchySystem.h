@@ -15,7 +15,7 @@ namespace GameEngine { namespace Components { struct Transform; struct WorldTran
 namespace GameEngine { namespace Engine::Renderer {
 
 // Computes world-space transforms (WorldTransform) from local Transform + Parent
-// hierarchy. See docs/TransformHierarchySystem.md for the component contract.
+// hierarchy. See docs/scripting/transform-hierarchy.mdx for the component contract.
 //
 // Every pass opts back into disabled rows. A disabled entity keeps a world
 // transform — the editor draws its gizmo and the inspector shows its position,
@@ -52,6 +52,9 @@ public:
     // tests and GE_HIER_PROFILE validation.
     size_t GetTopologyBuildCount() const { return m_TopologyBuildCount; }
     size_t GetLastPropagatedNodeCount() const { return m_LastPropagatedNodeCount; }
+    // Entities the last flat pass visited (the chunks its Changed<Transform>
+    // gate let through).
+    size_t GetLastFlatResolvedCount() const { return m_LastFlatCount; }
 
 private:
     struct Node {
@@ -85,6 +88,15 @@ private:
     // Records the cached hierarchy roots whose world matrix it changed.
     void ResolveFlatParallel(ECS::World& world, FlatScope scope);
     bool HasParentColumnChange(ECS::World& world, uint64 entryVersion);
+    // After a structural change that edited no Parent column: true when the
+    // cached topology still describes the world, so no rebuild is owed. Every
+    // node is alive, with its Transform and WorldTransform at the addresses it
+    // captured: an archetype move (a component added or removed, a Parent
+    // removed included) or a swap-remove in the node's chunk moves them. It
+    // rests on chunk storage staying put otherwise: a chunk that holds a live
+    // entity is never freed or reallocated (growth adds chunks). A new
+    // Parent-holder is not a node; the Parent column gate reports it. O(nodes).
+    bool IsTopologyCacheCurrent(ECS::World& world) const;
     size_t FindNodeIndex(ECS::EntityHandle entity) const;
     void AddNode(ECS::EntityHandle entity, const Components::Transform& local,
                  Components::WorldTransform& worldTransform, ECS::EntityHandle parent);

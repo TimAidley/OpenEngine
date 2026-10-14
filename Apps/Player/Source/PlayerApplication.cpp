@@ -563,8 +563,9 @@ void PlayerApplication::ApplyPointerLock()
     Input::InputSystem* input = GetInputSystem();
     if (!window || !input)
         return;
-    window->SetCursorLocked(input->IsPointerLockRequested());
-    input->SetPointerLocked(window->IsCursorLocked() && window->IsFocused());
+    window->SetCursorLocked(input->GetPointerLockState() != Input::PointerLockState::Unlocked);
+    Input::IRawInputSink& sink = *input;
+    sink.OnPointerLock(window->IsCursorLocked() && window->IsFocused());
 }
 
 bool PlayerApplication::ToggleRuntimeHdrOutput()

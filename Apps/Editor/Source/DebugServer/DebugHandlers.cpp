@@ -42,6 +42,7 @@
 #include "DebugServer/JobSystemDebugHandlers.h"
 #include "DebugServer/NavigationDebugHandlers.h"
 #include "DebugServer/MarkupDebugHandlers.h"
+#include "DebugServer/MemoryDebugHandlers.h"
 #include "DebugServer/PerformDropRequest.h"
 #include "DebugServer/SkyDebugHandlers.h"
 #include "DebugServer/ThumbnailDebugHandlers.h"
@@ -2557,7 +2558,7 @@ ViewActivation ActivateDockedView(EditorApplication& app,
     {
         if (UIElement* rootEl = ui->GetRootElement())
         {
-            if (rootEl->FindById(EditorPanelIds::GameViewViewport))
+            if (rootEl->FindById(HashStringId(EditorPanelIds::GameViewViewport)))
             {
                 ui->SetFocusById(EditorPanelIds::GameViewViewport);
                 result.viewportFocused = true;
@@ -2589,7 +2590,7 @@ bool ApplyMainSceneViewPose(EditorApplication& app, const SceneViewCameraPose& p
 
     // Push the new angles into the SceneViewPanel — see set_camera.
     if (auto* root = app.m_Windows[0]->ui->GetRootElement())
-        if (auto* mount = dynamic_cast<Mount*>(root->FindById(EditorPanelIds::MountSceneView)))
+        if (auto* mount = dynamic_cast<Mount*>(root->FindById(HashStringId(EditorPanelIds::MountSceneView))))
             if (auto* svPanel = dynamic_cast<SceneViewPanel*>(mount->GetTarget()))
                 svPanel->SetYawPitch(pose.YawDeg, pose.PitchDeg);
     return true;
@@ -2721,7 +2722,8 @@ void RegisterDebugHandlers(EditorDebugServer& server,
                 result["focusedElementId"] = app.m_Windows[0]->ui->GetFocusedElementId();
                 result["hoveredElement"] = app.m_Windows[0]->ui->GetHoveredElementDebugName();
                 result["mouseCaptured"] = app.m_Windows[0]->ui->IsMouseCaptured();
-                result["pointerLocked"] = app.m_RuntimeInput && app.m_RuntimeInput->IsPointerLocked();
+                result["pointerLocked"] = app.m_RuntimeInput &&
+                    app.m_RuntimeInput->GetPointerLockState() == Input::PointerLockState::Locked;
                 result["captureElementId"] = app.m_Windows[0]->ui->GetCaptureId();
             }
         }
@@ -3142,6 +3144,9 @@ void RegisterDebugHandlers(EditorDebugServer& server,
     // 4j. navigation: what the path solve budget solved, queued and left waiting
     RegisterNavigationDebugHandlers(server);
 
+    // 4k. the Memory module's stats registry: arenas, tracked bytes, each thread's scratch
+    RegisterMemoryDebugHandlers(server, app);
+
     // 5. query_ecs
     server.RegisterHandler("query_ecs", [](const EditorDebugServer::RequestContext& ctx) -> json
                            {
@@ -3256,7 +3261,7 @@ void RegisterDebugHandlers(EditorDebugServer& server,
 
         if (!rootId.empty())
         {
-            UIElement* found = root->FindById(rootId);
+            UIElement* found = root->FindById(HashStringId(rootId));
             if (!found)
                 return Editor::RefuseRequest("Element not found: " + rootId);
             root = found;
@@ -3570,7 +3575,7 @@ void RegisterDebugHandlers(EditorDebugServer& server,
     auto resolvePooledList = [](UIManager* ui, const std::string& tableId, std::string& outError) -> ListView*
     {
         UIElement* root = ui->GetRootElement();
-        UIElement* el = root ? root->FindById(tableId) : nullptr;
+        UIElement* el = root ? root->FindById(HashStringId(tableId)) : nullptr;
         if (!el)
         {
             outError = "Element not found: " + tableId;
@@ -3954,7 +3959,7 @@ void RegisterDebugHandlers(EditorDebugServer& server,
         const std::string text = ctx.params["text"].get<std::string>();
 
         UIElement* root = wndCtx->ui->GetRootElement();
-        UIElement* target = root ? root->FindById(elementId) : nullptr;
+        UIElement* target = root ? root->FindById(HashStringId(elementId)) : nullptr;
         if (!target)
             return Editor::RefuseRequest("Element not found: " + elementId);
         auto* field = dynamic_cast<TextField*>(target);
@@ -4032,7 +4037,7 @@ void RegisterDebugHandlers(EditorDebugServer& server,
         {
             const std::string elementId = ctx.params["elementId"].get<std::string>();
             UIElement* root = ui->GetRootElement();
-            UIElement* target = root ? root->FindById(elementId) : nullptr;
+            UIElement* target = root ? root->FindById(HashStringId(elementId)) : nullptr;
             if (!target)
                 return Editor::RefuseRequest("Element not found: " + elementId);
             ui->FocusElement(target);
@@ -4079,7 +4084,7 @@ void RegisterDebugHandlers(EditorDebugServer& server,
             // Best-effort readback of the focused field's value so callers can
             // verify what the control now holds without a second round-trip.
             UIElement* root = ui->GetRootElement();
-            UIElement* el = root ? root->FindById(focusId) : nullptr;
+            UIElement* el = root ? root->FindById(HashStringId(focusId)) : nullptr;
             if (auto* sf = dynamic_cast<Field<std::string>*>(el))
                 outResult["value"] = sf->GetValue();
             else if (auto* ff = dynamic_cast<Field<float>*>(el))
@@ -5505,6 +5510,8 @@ void RegisterDebugHandlers(EditorDebugServer& server,
                     {"windowTicks", ex.WindowTicks},
                     {"escalationReasonBits", ex.EscalationReasonBits},
                     {"feedPatchedCount", ex.FeedPatchedCount},
+                    {"deltaFrame", ex.DeltaFrame},
+                    {"deltaPreparedCount", ex.DeltaPreparedCount},
                     {"subsetRefreshedCount", ex.SubsetRefreshedCount},
                     {"pendingMeshEntry", ex.PendingMeshEntry},
                     {"pendingMaterialLoad", ex.PendingMaterialLoad},
@@ -6613,7 +6620,7 @@ void RegisterDebugHandlers(EditorDebugServer& server,
                 SceneViewController* activeSceneCtrl = wndCtx->scene.get();
                 if (wndCtx->ui)
                     if (auto* root = wndCtx->ui->GetRootElement())
-                        if (auto* mount = dynamic_cast<Mount*>(root->FindById(EditorPanelIds::MountSceneView)))
+                        if (auto* mount = dynamic_cast<Mount*>(root->FindById(HashStringId(EditorPanelIds::MountSceneView))))
                             if (auto* svPanel = dynamic_cast<SceneViewPanel*>(mount->GetTarget()))
                                 if (auto* ac = svPanel->GetSceneControllerForSlot(svPanel->GetActiveViewportSlot()))
                                     activeSceneCtrl = ac;
@@ -6708,7 +6715,7 @@ void RegisterDebugHandlers(EditorDebugServer& server,
                 {
                     if (UIElement* root = wndCtx->ui->GetRootElement())
                     {
-                        if (UIElement* el = root->FindById(elementId))
+                        if (UIElement* el = root->FindById(HashStringId(elementId)))
                         {
                             layoutX = el->GetLayoutX();
                             layoutY = el->GetLayoutY();
@@ -6842,7 +6849,7 @@ void RegisterDebugHandlers(EditorDebugServer& server,
                             const std::string lookupId =
                                 target == "viewport" ? std::string(EditorPanelIds::MountSceneView)
                                                      : elementId;
-                            if (UIElement* el = root->FindById(lookupId))
+                            if (UIElement* el = root->FindById(HashStringId(lookupId)))
                             {
                                 layoutX = el->GetLayoutX();
                                 layoutY = el->GetLayoutY();
@@ -7072,7 +7079,7 @@ void RegisterDebugHandlers(EditorDebugServer& server,
                 SceneViewController* activeSceneCtrl = wndCtx->scene.get();
                 if (wndCtx->ui)
                     if (auto* root = wndCtx->ui->GetRootElement())
-                        if (auto* mount = dynamic_cast<Mount*>(root->FindById(EditorPanelIds::MountSceneView)))
+                        if (auto* mount = dynamic_cast<Mount*>(root->FindById(HashStringId(EditorPanelIds::MountSceneView))))
                             if (auto* svPanel = dynamic_cast<SceneViewPanel*>(mount->GetTarget()))
                                 if (auto* ac = svPanel->GetSceneControllerForSlot(svPanel->GetActiveViewportSlot()))
                                     activeSceneCtrl = ac;
@@ -7368,7 +7375,7 @@ void RegisterDebugHandlers(EditorDebugServer& server,
         UIElement* root = wndCtx->ui->GetRootElement();
         if (!root)
             return Editor::RefuseRequest("No root element");
-        UIElement* el = root->FindById(elementId);
+        UIElement* el = root->FindById(HashStringId(elementId));
         // Docked panel content is owned by the docking model and may be
         // mounted through a portal rather than beneath the window root.
         // Match get_panel_tree's reach so MCP can drive virtualized panel
@@ -7377,7 +7384,7 @@ void RegisterDebugHandlers(EditorDebugServer& server,
         {
             for (const auto& [_, panel] : app.m_Docking->GetPanels())
             {
-                if (panel && (el = panel->FindById(elementId)))
+                if (panel && (el = panel->FindById(HashStringId(elementId))))
                     break;
             }
         }
@@ -7636,12 +7643,12 @@ void RegisterDebugHandlers(EditorDebugServer& server,
 
         return Editor::RefuseRequest("Unsupported asset type: " + ext); });
 
-    server.RegisterHandler("graph_set_viewport", [&app](const EditorDebugServer::RequestContext& ctx) -> json
+    server.RegisterHandler("graph_set_viewport", [](const EditorDebugServer::RequestContext& ctx) -> json
                            {
         GraphPanel* nodeGraphPanel = ResolveDebugGraphPanel();
         if (!nodeGraphPanel)
             return Editor::RefuseRequest("Node Graph panel not found");
-        auto* canvas = dynamic_cast<GraphCanvas*>(nodeGraphPanel->FindById("NodeGraphCanvas"));
+        auto* canvas = dynamic_cast<GraphCanvas*>(nodeGraphPanel->FindById("NodeGraphCanvas"_sid));
         if (!canvas)
             return Editor::RefuseRequest("NodeGraphCanvas not found");
         float panX = 0.f;
@@ -7655,19 +7662,19 @@ void RegisterDebugHandlers(EditorDebugServer& server,
         canvas->GetPanZoom(panX, panY, zoom);
         return json{{"ok", true}, {"panX", panX}, {"panY", panY}, {"zoom", zoom}}; });
 
-    server.RegisterHandler("graph_spike_dummy_nodes", [&app](const EditorDebugServer::RequestContext& ctx) -> json
+    server.RegisterHandler("graph_spike_dummy_nodes", [](const EditorDebugServer::RequestContext& ctx) -> json
                            {
         GraphPanel* nodeGraphPanel = ResolveDebugGraphPanel();
         if (!nodeGraphPanel)
             return Editor::RefuseRequest("Node Graph panel not found");
-        auto* canvas = dynamic_cast<GraphCanvas*>(nodeGraphPanel->FindById("NodeGraphCanvas"));
+        auto* canvas = dynamic_cast<GraphCanvas*>(nodeGraphPanel->FindById("NodeGraphCanvas"_sid));
         if (!canvas)
             return Editor::RefuseRequest("NodeGraphCanvas not found");
         const int count = ctx.params.value("count", 60);
         canvas->SpikeSpawnDummyNodes(count);
         return json{{"ok", true}, {"count", count}}; });
 
-    server.RegisterHandler("graph_get_nodes", [&app](const EditorDebugServer::RequestContext&) -> json
+    server.RegisterHandler("graph_get_nodes", [](const EditorDebugServer::RequestContext&) -> json
                            {
         GraphPanel* nodeGraphPanel = ResolveDebugGraphPanel();
         if (!nodeGraphPanel)
@@ -7685,7 +7692,7 @@ void RegisterDebugHandlers(EditorDebugServer& server,
         }
         return json{{"ok", true}, {"nodes", nodes}}; });
 
-    server.RegisterHandler("graph_delete_node", [&app](const EditorDebugServer::RequestContext& ctx) -> json
+    server.RegisterHandler("graph_delete_node", [](const EditorDebugServer::RequestContext& ctx) -> json
                            {
         const std::string nodeId = ctx.params.value("nodeId", std::string{});
         if (nodeId.empty())
@@ -7693,7 +7700,7 @@ void RegisterDebugHandlers(EditorDebugServer& server,
         GraphPanel* nodeGraphPanel = ResolveDebugGraphPanel();
         if (!nodeGraphPanel)
             return Editor::RefuseRequest("Node Graph panel not found");
-        auto* canvas = dynamic_cast<GraphCanvas*>(nodeGraphPanel->FindById("NodeGraphCanvas"));
+        auto* canvas = dynamic_cast<GraphCanvas*>(nodeGraphPanel->FindById("NodeGraphCanvas"_sid));
         if (!canvas)
             return Editor::RefuseRequest("NodeGraphCanvas not found");
         const Graph::Model* model = nodeGraphPanel->ActiveGraphModel();
@@ -8381,7 +8388,7 @@ void RegisterDebugHandlers(EditorDebugServer& server,
         // the panel via SetCameraAnglesDeg — without this sync, our MCP-set
         // angles would be clobbered on the next frame.
         if (auto* root = app.m_Windows[0]->ui->GetRootElement())
-            if (auto* mount = dynamic_cast<Mount*>(root->FindById(EditorPanelIds::MountSceneView)))
+            if (auto* mount = dynamic_cast<Mount*>(root->FindById(HashStringId(EditorPanelIds::MountSceneView))))
                 if (auto* svPanel = dynamic_cast<SceneViewPanel*>(mount->GetTarget()))
                     svPanel->SetYawPitch(pose.YawDeg, pose.PitchDeg);
 
@@ -9698,7 +9705,7 @@ void RegisterDebugHandlers(EditorDebugServer& server,
         return result; });
 
     // Skeleton store diagnostics: per-world runtime state for debugging multi-world skinning isolation.
-    server.RegisterHandler("get_skeleton_store_state", [&app](const EditorDebugServer::RequestContext& ctx) -> json
+    server.RegisterHandler("get_skeleton_store_state", [](const EditorDebugServer::RequestContext& ctx) -> json
                            {
         auto& store = Engine::Renderer::SkeletonStore::Instance();
         const uint32_t count = store.GetCount();

@@ -68,10 +68,17 @@ inline constexpr float32 kExposureClampNoOpMaxEv = 20.0f;
 // hidden trim.
 inline constexpr float32 kDefaultAutoExposureBiasEv = 0.0f;
 
+// What a view's Tonemap pass writes. Set after the volume blend by the view that owns the frame
+// (the editor's Scene View, the shadow diagnostic); no volume authors or blends it.
+enum class PostProcessViewOutput : int32
+{
+    Look = 0,   // the blended look: the image a game ships
+    NoLook = 1, // exposed scene-linear with no display transform; HDR rolls it into the headroom
+};
+
 // Resolved per-frame post-process state after blending all active PostProcessVolume entities.
-// TonemapMode stored as int32 to avoid cross-namespace include in this header;
-// values match Components::TonemapMode enum (0=ACES, 1=Reinhard, 2=AgX, 3=Filmic,
-// 4=Neutral, 5=Linear, 6=Gran Turismo 7, 7=ACES 2).
+// Look is stored as int32 to avoid a cross-namespace include in this header; the values are
+// Components::Look's (0 = Neutral, 1 = Filmic, 2 = Photographic).
 struct PostProcessSettings
 {
     float32 Exposure       = 1.0f;
@@ -115,13 +122,11 @@ struct PostProcessSettings
     float32 HalationTintR = 1.0f;
     float32 HalationTintG = 0.12f;
     float32 HalationTintB = 0.025f;
-    // Default to Khronos PBR Neutral: tonemapping is a baseline of the pipeline,
-    // so volume-less worlds are tonemapped by default. A PostProcessVolume
-    // overrides this. The always-present Tonemap pass's skipWhen still skips it
-    // only when something EXPLICITLY selects Linear (mode 5) + exposure 1 +
-    // dither 0.
-    int32   TonemapMode    = 4; // Components::TonemapMode as int32 (4 = Neutral)
-    int32   DitherMode     = 0;
+    // Neutral by default: the display transform is a baseline of the pipeline, so a
+    // volume-less world is rendered through a look too. A PostProcessVolume overrides it.
+    int32   Look           = 0; // Components::Look as int32 (0 = Neutral)
+    // View-only, never blended and never reflected: the Tonemap node reads it directly.
+    PostProcessViewOutput ViewOutput = PostProcessViewOutput::Look;
     // HDR10/HDR10+ highlight-chroma compression in ICtCp. The tonemap node
     // forces this to zero for SDR, HLG, and scRGB. Zero is exact pass-through.
     float32 IctcpChromaCompression = 0.0f;
@@ -205,7 +210,6 @@ struct PostProcessSettings
     float32 ColorFilterB         = 1.0f;
     float32 ColorFilterIntensity = 0.0f;
     int32   ColorFilterBlendMode = 0; // Components::ColorFilterBlendMode as int32
-    int32   ColorFilterStackOrder = 0;
     float32 CasStrength          = 0.0f;
     int32   CasStackOrder        = 1;
 
@@ -372,6 +376,8 @@ struct PostProcessSettings
     int32 HeightFogUseTimeOfDay = 0;
     float32 HeightFogSkyHorizonOffset = 0.0f;
     float32 HeightFogSkyBottomStrength = 0.0f;
+    // Components::HeightFogColorMode: 0 fixed colour, 1 the sky's horizon radiance.
+    int32 HeightFogColorMode = 1;
 
     // HDR color grade (unified three-way corrector in hdr_color_fx.frag), before
     // tonemap. Band offsets are zero-centered (0 = neutral); Contrast/Saturation
@@ -632,6 +638,8 @@ struct PostProcessSettings
     bool IsDofActive(float32 epsilon = 1.0f / 1024.0f) const;
     bool IsHeatDistortionActive(float32 epsilon = 1.0f / 1024.0f) const;
     bool IsHeightFogActive(float32 epsilon = 1.0f / 1024.0f) const;
+    // The height fog runs and takes its colour from the sky (it reads the sky backdrop).
+    bool IsHeightFogSkyColorActive(float32 epsilon = 1.0f / 1024.0f) const;
     bool IsVolumetricFogActive(float32 epsilon = 1.0f / 1024.0f) const;
     bool IsAtmosphericCloudActive(float32 epsilon = 1.0f / 1024.0f) const;
     bool IsVolumetricCloudsActive(float32 epsilon = 1.0f / 1024.0f) const;

@@ -117,7 +117,7 @@ UIElement* UIManager::ResolveButtonTarget() const
         {
             if (UIElement* r = GetRootElement())
             {
-                if (UIElement* byId = r->FindById(m_CaptureId))
+                if (UIElement* byId = r->FindById(HashStringId(m_CaptureId)))
                     return byId;
             }
         }
@@ -178,12 +178,12 @@ void UIManager::MarkPseudoStateForSyncTransition(uint64_t activeBeforeInstanceId
     constexpr unsigned kFocusFlags = UIElement::StyleDirty | UIElement::VisualDirty;
     if (!focusIdBefore.empty())
     {
-        if (UIElement* prevEl = root->FindById(focusIdBefore))
+        if (UIElement* prevEl = root->FindById(HashStringId(focusIdBefore)))
             prevEl->MarkDirtySubtree(kFocusFlags);
     }
     if (!m_FocusId.empty())
     {
-        if (UIElement* newEl = root->FindById(m_FocusId))
+        if (UIElement* newEl = root->FindById(HashStringId(m_FocusId)))
             newEl->MarkDirtySubtree(kFocusFlags);
     }
 }
@@ -247,7 +247,7 @@ bool UIManager::DispatchMouseButtonPress()
                 m_MouseCaptured = true;
                 m_CaptureElement = root;
                 m_CaptureInstanceId = root->GetInstanceId();
-                m_CaptureId = root->GetId();
+                m_CaptureId = EnsureElementId(root);
             }
             return true;
         }
@@ -367,7 +367,7 @@ bool UIManager::DispatchMouseButtonRelease()
         if (!capturedResolved && !capturedIdForFocus.empty())
         {
             if (UIElement* root = GetRootElement())
-                capturedResolved = root->FindById(capturedIdForFocus);
+                capturedResolved = root->FindById(HashStringId(capturedIdForFocus));
         }
         if (capturedResolved)
             preserveFocus = capturedResolved->IsFocusTargetForId(m_FocusId);
@@ -378,10 +378,12 @@ bool UIManager::DispatchMouseButtonRelease()
         return consumed;
 
     // A captured press deferred its focus assignment to this release (see the
-    // press half). Honor the capture's focus target first so a drag that ends
-    // outside the control (text drag-selection past the field edge) still
-    // focuses it; non-focusable captures (scrollbar thumb, splitter) fall
-    // through without touching focus.
+    // press half). Only the capture's focus target can take it, so a drag that
+    // ends outside the control (text drag-selection past the field edge) still
+    // focuses it, and a non-focusable capture (scrollbar thumb, splitter, the
+    // root holding a swallowed press) ends without touching focus, whatever
+    // lies under the pointer by now. Only an uncaptured release focuses the
+    // pointer target.
     UIElement* released = nullptr;
     if (hadCapture)
     {
@@ -389,12 +391,12 @@ bool UIManager::DispatchMouseButtonRelease()
         if (!released && !capturedIdForFocus.empty())
         {
             if (UIElement* root = GetRootElement())
-                released = root->FindById(capturedIdForFocus);
+                released = root->FindById(HashStringId(capturedIdForFocus));
         }
         if (released && !(released->ResolveFocusTarget() && released->ResolveFocusTarget()->IsFocusable()))
             released = nullptr;
     }
-    if (!released)
+    if (!released && !hadCapture)
         released = pointerTarget;
     UIElement* focusTarget = released ? released->ResolveFocusTarget() : nullptr;
     if (focusTarget && focusTarget->IsFocusable() && focusTarget->IsEnabledInHierarchy())
@@ -497,7 +499,7 @@ bool UIManager::BubbleEventFrom(UIElement* target, UIEvent& ev)
 bool UIManager::DispatchInputEvent(UIEvent& ev, bool allowHoveredFallback)
 {
     UIElement* root = GetRootElement();
-    UIElement* focusedEl = (root && !m_FocusId.empty()) ? root->FindById(m_FocusId) : nullptr;
+    UIElement* focusedEl = (root && !m_FocusId.empty()) ? root->FindById(HashStringId(m_FocusId)) : nullptr;
     UIElement* hoveredEl =
         (allowHoveredFallback && m_HoveredInstanceId != 0) ? FindElementByInstanceId(m_HoveredInstanceId) : nullptr;
     // Keys and text never reach a disabled subtree, whether by focus (a control disabled while it
@@ -764,7 +766,7 @@ bool UIManager::OnKey(int key, int action, int mods)
         // ancestor carrying the "panel" class (added by DockPanel); when focus is
         // not inside a panel we fall back to the global order.
         UIElement* root = GetRootElement();
-        UIElement* focusedEl = (root && !m_FocusId.empty()) ? root->FindById(m_FocusId) : nullptr;
+        UIElement* focusedEl = (root && !m_FocusId.empty()) ? root->FindById(HashStringId(m_FocusId)) : nullptr;
         UIElement* scope = nullptr;
         for (UIElement* p = focusedEl; p; p = p->GetParent())
         {
@@ -787,7 +789,7 @@ bool UIManager::OnKey(int key, int action, int mods)
             };
             for (const std::string& id : m_FocusOrder)
             {
-                UIElement* e = root->FindById(id);
+                UIElement* e = root->FindById(HashStringId(id));
                 if (e && isWithin(e, scope))
                     scopedOrder.push_back(id);
             }
@@ -820,9 +822,9 @@ bool UIManager::OnKey(int key, int action, int mods)
         if (root)
         {
             if (!prevFocusId.empty())
-                if (UIElement* prevEl = root->FindById(prevFocusId))
+                if (UIElement* prevEl = root->FindById(HashStringId(prevFocusId)))
                     prevEl->MarkDirtySubtree(UIElement::StyleDirty | UIElement::VisualDirty);
-            if (UIElement* newEl = root->FindById(m_FocusId))
+            if (UIElement* newEl = root->FindById(HashStringId(m_FocusId)))
                 newEl->MarkDirtySubtree(UIElement::StyleDirty | UIElement::VisualDirty);
         }
         return true;
@@ -926,7 +928,7 @@ void UIManager::SetFocusById(const std::string& id)
     // request leaves focus where it was. An id that does not resolve yet is kept, as before.
     if (!id.empty() && GetRootElement())
     {
-        if (const UIElement* el = GetRootElement()->FindById(id); el && !ReceivesInput(el))
+        if (const UIElement* el = GetRootElement()->FindById(HashStringId(id)); el && !ReceivesInput(el))
             return;
     }
     m_FocusId = id;
@@ -938,7 +940,7 @@ void UIManager::SetFocusById(const std::string& id)
     // Mark style dirty so :focus pseudo-class updates on the target element.
     if (!id.empty() && GetRootElement())
     {
-        if (auto* el = GetRootElement()->FindById(id))
+        if (auto* el = GetRootElement()->FindById(HashStringId(id)))
             el->MarkDirty(UIElement::StyleDirty | UIElement::VisualDirty);
     }
 }
@@ -995,14 +997,14 @@ bool UIManager::OnScroll(float xoffset, float yoffset)
         {
             if (UIElement* root = GetRootElement())
             {
-                target = root->FindById(m_FocusId);
+                target = root->FindById(HashStringId(m_FocusId));
             }
         }
         if (!target && m_FocusId.empty() && !m_FocusOrder.empty())
         {
             if (UIElement* root = GetRootElement())
             {
-                target = root->FindById(m_FocusOrder[0]);
+                target = root->FindById(HashStringId(m_FocusOrder[0]));
             }
         }
     }
@@ -1153,6 +1155,9 @@ bool UIManager::DispatchBubbleEvent(UIElement* target, EventId id, int button,
     if (!treeMutated) { if (m_TreeStructureGeneration.load(std::memory_order_relaxed) != treeGenBefore) treeMutated = true; }
     // Accept capture — but only if the requesting element survived the deferred actions above.
     // Prefer storing the pointer (re-resolved by id) to work across Mount portals.
+    // A press whose requester did not survive (a dropdown item whose commit rebuilt the
+    // inspector) still owns the rest of its gesture: the root holds it, so the release reaches
+    // no control and, as a non-focusable capture, moves no focus (DispatchMouseButtonRelease).
     if (captureReqInstanceId != 0 && !m_MouseCaptured)
     {
         UIElement* cap = FindElementByInstanceId(captureReqInstanceId);
@@ -1166,6 +1171,16 @@ bool UIManager::DispatchBubbleEvent(UIElement* target, EventId id, int button,
             {
                 // Capture must be restorable across rebuilds (splitter drag, virtualization).
                 m_CaptureId = EnsureElementId(cap);
+            }
+        }
+        else if (id == kEventMouseDown)
+        {
+            if (UIElement* root = GetRootElement())
+            {
+                m_MouseCaptured = true;
+                m_CaptureElement = root;
+                m_CaptureInstanceId = root->GetInstanceId();
+                m_CaptureId = EnsureElementId(root);
             }
         }
     }

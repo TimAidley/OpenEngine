@@ -10,6 +10,7 @@ set(UI_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/UIManager_Input.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/UIManager_Assets.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/UIElement.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/ElementIdIndex.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/ModuleOwnedHandlers.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/ITextMeasurable.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/GlyphRunEmitter.cpp
@@ -44,6 +45,8 @@ set(UI_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Parsers/CSSValueParsers.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Parsers/CSSVarResolver.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Parsers/CSSStylesheetParser.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Parsers/MarkdownParser.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Parsers/MarkdownInlineParser.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Layout/YogaLayout.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Controls/Label.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Controls/BaseField.cpp
@@ -69,6 +72,7 @@ set(UI_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Controls/AxisHeaderBar.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Controls/TableView.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Controls/EnableDot.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Controls/MarkdownText.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Controls/Toggle.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Controls/Checkbox.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Controls/Dropdown.cpp
@@ -150,9 +154,9 @@ endif()
 find_package(pugixml CONFIG QUIET)
 if(pugixml_FOUND)
     target_link_libraries(UI PUBLIC pugixml::pugixml)
-    target_compile_definitions(UI PUBLIC GE_HAVE_PUGIXML=1)
+    target_compile_definitions(UI PRIVATE GE_HAVE_PUGIXML=1)
 else()
-    target_compile_definitions(UI PUBLIC GE_HAVE_PUGIXML=0)
+    target_compile_definitions(UI PRIVATE GE_HAVE_PUGIXML=0)
 endif()
 
 # Prefer CMake package config if provided by vcpkg; fall back to manual discovery in manifest mode
@@ -160,10 +164,8 @@ find_package(lexbor CONFIG QUIET)
 if(lexbor_FOUND)
     if(TARGET lexbor::lexbor)
         target_link_libraries(UI PUBLIC lexbor::lexbor)
-        target_compile_definitions(UI PUBLIC GE_HAVE_LEXBOR=1)
     elseif(TARGET lexbor::lexbor_static)
         target_link_libraries(UI PUBLIC lexbor::lexbor_static)
-        target_compile_definitions(UI PUBLIC GE_HAVE_LEXBOR=1)
     else()
         message(FATAL_ERROR "lexbor package found, but no supported imported target was exported.")
     endif()
@@ -194,7 +196,6 @@ else()
         target_include_directories(lexbor::lexbor INTERFACE "${LEXBOR_INCLUDE_DIR}")
         target_link_libraries(lexbor::lexbor INTERFACE)
         target_link_libraries(UI PUBLIC lexbor::lexbor)
-        target_compile_definitions(UI PUBLIC GE_HAVE_LEXBOR=1)
         message(STATUS "lexbor located via manual discovery: ${LEXBOR_LIBRARY}")
     else()
         message(FATAL_ERROR "lexbor not found. Ensure it is installed via vcpkg for ${VCPKG_TARGET_TRIPLET} and that CMAKE_TOOLCHAIN_FILE points to vcpkg.cmake.")
@@ -437,6 +438,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PercentageUnitsFontGapTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PercentageUnitsMarginRadiusTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PercentageUnitsLengthTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PercentMinWidthShrinkTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/ShadowGlowPrimitiveTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/CssTransformRenderTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/TextEffectsTests.cpp
@@ -463,6 +465,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/ViewportRectSnapTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/TextAreaContentScaleTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/TextAreaMetricsTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Tests/TextAreaIncrementalWrapTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/TextAreaScrollCullingTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/CssColorToPrimitiveTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/TextSelectionPaintOrderTests.cpp
@@ -508,6 +511,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/StyleUtilTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/StyleOverrideCustomColorTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/FloatingPanelTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Tests/MarkdownTextLayoutTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/UIManagerPseudoInvalidationTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/StructuralPseudoRestyleTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/RuleCacheValidatorTests.cpp
@@ -611,7 +615,9 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/SearchDialogTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/CaretBlinkTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/CaretForceVisibleDeadlineTests.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/Tests/ItemResizeGestureTests.cpp)
+        ${CMAKE_CURRENT_SOURCE_DIR}/Tests/ItemResizeGestureTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Tests/MarkdownParserTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Tests/MarkdownTextTests.cpp)
 
     # The UI core the rest sits on: event dispatch and handler tables, element
     # registration and lifecycle, attach/detach, UIManager ordering and input
@@ -625,6 +631,7 @@ if(BUILD_TESTING)
     # AbiNativeSmokeTest links the exports but has no host, so every call there
     # stops at not-found before a type is ever examined.
     ge_add_ui_test(UITests
+        ${CMAKE_CURRENT_SOURCE_DIR}/Tests/ElementIdLookupTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/ModuleOwnedHandlerRevocationTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/ElementFactoryOwnershipTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/ElementTypeOwnershipHazardTests.cpp
@@ -643,6 +650,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/ControlValueEventTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/UIManagerOrderTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/UIMouseButtonDispatchTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Tests/PressOwnerRemovedTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/UIManagerRenderRGTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/UITargetSpaceTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Tests/UITextureSpaceTests.cpp

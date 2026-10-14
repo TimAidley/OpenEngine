@@ -89,6 +89,7 @@ struct RecordingSink final : Input::IRawInputSink
     void OnMouseMove(Mathematics::Vector2) override {}
     void OnMouseLeave() override {}
     void OnWindowFocus(bool focused) override { events.push_back(focused ? "f1" : "f0"); }
+    void OnPointerLock(bool) override {}
     bool OnMouseButton(int button, bool down, int /*mods*/) override
     {
         events.push_back("b" + std::to_string(button) + ":" + (down ? "1" : "0"));
@@ -2977,6 +2978,13 @@ TEST(WindowInputRoutingTests, ALockedPointerReachesOnlyTheGameplaySink)
     surface.gameplaySink = &game;
     surface.pointerLocked = true;
     f.UsePlaySurface(surface);
+    // The host's own wheel hook is a stage like any other: a locked wheel skips it.
+    int hostWheelTicks = 0;
+    f.config.onScrollPre = [&hostWheelTicks](float, float)
+    {
+        ++hostWheelTicks;
+        return false;
+    };
 
     WindowInputRouter::RouteMouseMove(f.config, /*window=*/nullptr, 40.0f, 30.0f);
     WindowInputRouter::RouteMouseButton(f.config, 0, /*pressed=*/true, 0);
@@ -2985,6 +2993,7 @@ TEST(WindowInputRoutingTests, ALockedPointerReachesOnlyTheGameplaySink)
 
     EXPECT_FALSE(f.input.IsPointerInWindow());
     EXPECT_FALSE(f.input.IsMouseButtonDown(0));
+    EXPECT_EQ(hostWheelTicks, 0);
     EXPECT_EQ(game.events, (std::vector<std::string>{"b0:1", "s0:2"}));
 
     // And the moves themselves, through a real sink: the delta counts.
@@ -3047,4 +3056,33 @@ TEST(WindowInputRoutingTests, WithoutAGameplaySinkALockedPointerReachesTheWindow
 
     EXPECT_EQ(f.input.GetMouseDelta(), Mathematics::Vector2(-940.0f, 20.0f));
     EXPECT_TRUE(f.input.IsMouseButtonDown(0));
+}
+
+// The editor maps the Game View's pointer by its UI scale. A locked move skips
+// that mapping, so the game's mouse delta is in window client units and a
+// sensitivity tuned in the editor holds in the Player.
+TEST(WindowInputRoutingTests, ALockedMoveReachesGameplayInWindowClientUnits)
+{
+    RouterFixture f;
+    if (!f.Init())
+    {
+        GTEST_SKIP() << "Device init failed";
+    }
+
+    Input::InputSystem runtime{Input::SinkRole::Gameplay};
+    WindowInputRouterConfig::PlaySurface surface;
+    surface.gameplaySink = &runtime;
+    surface.pointerLocked = true;
+    surface.mapGameplayPointer = [](float clientX, float clientY, float& playX, float& playY)
+    {
+        playX = clientX * 0.5f - 100.0f;
+        playY = clientY * 0.5f - 50.0f;
+    };
+    f.UsePlaySurface(surface);
+
+    WindowInputRouter::RouteMouseMove(f.config, nullptr, 400.0f, 300.0f);
+    WindowInputRouter::RouteMouseMove(f.config, nullptr, 520.0f, 290.0f);
+    runtime.Update(0.016f);
+
+    EXPECT_EQ(runtime.GetMouseDelta(), Mathematics::Vector2(120.0f, -10.0f));
 }

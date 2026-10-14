@@ -23,17 +23,22 @@
 #include "Input/InputSystem.h"
 #include "Input/KeyCodes.h"
 #include "InspectorRegistry.h"
+#include "Editor/Entities/EditorComponentTraits.h"
+#include "Editor/Entities/EntityDisplayName.h"
+#include "Inspectors/ComponentIconClass.h"
 #include "Logger/CallbackSink.h"
 #include "Logger/Logger.h"
 #include "MarkupECS/MarkupService.h"
 #include "TestEnvVar.h"
 #include "TestTempDir.h"
 #include "UI/Controls/Button.h"
+#include "UI/Controls/CollapsibleInfoCard.h"
 #include "UI/Controls/Dropdown.h"
 #include "UI/Controls/InspectorNotice.h"
 #include "UI/Controls/Label.h"
 #include "UI/Controls/TextArea.h"
 #include "UI/Controls/TextField.h"
+#include "UI/EditorIcons.h"
 #include "UI/StyleProperties.h"
 #include "UI/UiContext.h"
 #include "UI/UiDispatcher.h"
@@ -579,7 +584,7 @@ TEST_F(MarkupEditorBridgeTest, TheSearchAndTheStatusFilterSelectTheSameMarkupsOn
     EXPECT_TRUE(Editor::MarkupMatchesFilters(World, lake, "", ""));
     EXPECT_FALSE(Editor::MarkupMatchesFilters(World, lake, "", proposed));
     EXPECT_TRUE(Editor::MarkupMatchesFilters(World, forest, "", proposed));
-    EXPECT_TRUE(Editor::MarkupMatchesFilters(World, forest, "mark", proposed)); // "Mark-up", any case
+    EXPECT_TRUE(Editor::MarkupMatchesFilters(World, forest, "mark", proposed)); // "Untitled mark-up", any case
     EXPECT_FALSE(Editor::MarkupMatchesFilters(World, forest, "zzz", proposed));
 }
 
@@ -723,8 +728,36 @@ TEST_F(MarkupEditorBridgeTest, TheInspectorSectionIsReadOnlyInPlay)
     for (Button* button : FindAll<Button>(*section))
     {
         if (button->GetText() == "Add comment")
+        {
             EXPECT_FALSE(button->IsEnabled());
+        }
     }
+}
+
+// Who created and last changed a mark-up is a note about the section, so it reads in the editor's
+// info card rather than as one more loose line among the fields.
+TEST_F(MarkupEditorBridgeTest, TheCreatedAndChangedLineIsAnInfoCard)
+{
+    const ECS::EntityHandle lake = CreateMarkup();
+    Editor::UndoRedoService undo;
+    const std::unique_ptr<UIElement> section = BuildInspectorSection(lake, undo);
+
+    const std::string provenance = "Created now by you · changed now by you";
+    std::vector<EditorUI::CollapsibleInfoCard*> cards;
+    for (EditorUI::CollapsibleInfoCard* card : FindAll<EditorUI::CollapsibleInfoCard>(*section))
+    {
+        if (card->GetFullText() == provenance)
+            cards.push_back(card);
+    }
+    ASSERT_EQ(cards.size(), 1u) << "no info card holds '" << provenance << "'";
+    size_t labelsInCard = 0;
+    for (Label* label : FindAll<Label>(*cards.front()))
+        labelsInCard += label->GetText() == provenance ? 1 : 0;
+    size_t labelsInSection = 0;
+    for (Label* label : FindAll<Label>(*section))
+        labelsInSection += label->GetText() == provenance ? 1 : 0;
+    EXPECT_EQ(labelsInCard, 1u);
+    EXPECT_EQ(labelsInSection, labelsInCard) << "the line is also shown outside its card";
 }
 
 // A mark-up's volume is part of the mark-up: in play mode its shape refuses a change too.
@@ -1167,4 +1200,64 @@ TEST_F(MarkupEditorBridgeTest, AnEntityChipSelectsFromItsNameAndFramesFromItsGly
     frame.DispatchEvent(glyphRelease);
     const std::vector<std::pair<ECS::EntityHandle, bool>> expected{{cathedral, false}, {cathedral, true}};
     EXPECT_EQ(selects, expected);
+}
+
+// A mark-up with no name is "Untitled mark-up" on its Mark-ups panel row and wherever the editor
+// names an entity (the inspector's header, the Hierarchy, an entity link); another entity with no
+// name keeps its id.
+TEST_F(MarkupEditorBridgeTest, AnUnnamedMarkupIsAnUntitledMarkupEverywhere)
+{
+    Editor::RegisterMarkupInspector(*m_Bridge);
+    const ECS::EntityHandle markup = CreateMarkup();
+    const ECS::EntityHandle plain = World.CreateEntity();
+    World.AddComponentImmediate(plain, Components::Transform{});
+    EXPECT_EQ(Editor::MarkupTitle(World, markup), "Untitled mark-up");
+    EXPECT_EQ(Editor::EntityDisplayName(World, markup), "Untitled mark-up");
+    EXPECT_EQ(Editor::EntityDisplayName(World, plain), Editor::EntityIdLabel(plain));
+}
+
+namespace
+{
+
+// The body of the rule whose selector ends in `selectorTail` in the editor sheet at `sheetPath`:
+// the text from its opening brace to its closing one, or empty when the sheet has no such rule.
+std::string EditorRuleBody(const char* sheetPath, const std::string& selectorTail)
+{
+    std::ifstream in(std::filesystem::path(GE_EDITOR_SOURCE_DIR) / sheetPath);
+    const std::string sheet((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const size_t selector = sheet.find(selectorTail + " {");
+    if (selector == std::string::npos)
+        return {};
+    const size_t open = sheet.find('{', selector);
+    return sheet.substr(open, sheet.find('}', open) - open);
+}
+
+} // namespace
+
+// A mark-up's component shows the glyph of the tool that places it: the inspector section header,
+// the Add Component picker (both through ComponentIconClass) and the Hierarchy row all draw the
+// Scene View tool strip's Mark-up icon.
+TEST_F(MarkupEditorBridgeTest, TheMarkupComponentsShowTheMarkupToolsIcon)
+{
+    const ECS::EntityHandle markup = CreateMarkup();
+    Editor::UndoRedoService undo;
+    (void)BuildInspectorSection(markup, undo);
+    const std::string toolIcon = std::string("url(\"") + EditorIcons::kMarkup + "\")";
+
+    for (const ECS::ComponentTypeId type :
+         {ECS::GetComponentTypeId<Markup>(), ECS::GetComponentTypeId<Components::MarkupVolume>()})
+    {
+        const std::string iconClass = Editor::ComponentIconClass(&World, markup, type);
+        ASSERT_EQ(iconClass, "inspector-section-icon-markup");
+        EXPECT_NE(EditorRuleBody("Assets/UI/theme/inspector.css", ".inspector-section-icon." + iconClass)
+                      .find(toolIcon),
+                  std::string::npos)
+            << iconClass << " does not draw " << EditorIcons::kMarkup;
+    }
+    Editor::EditorComponentTraits traits;
+    ASSERT_TRUE(Editor::EditorComponentTraitsRegistry::Get().TryGet(ECS::GetComponentTypeId<Markup>(), traits));
+    ASSERT_EQ(traits.HierarchyRowClass, "hierarchy-entity-markup");
+    EXPECT_NE(EditorRuleBody("Assets/UI/theme/views.css", ".entity-icon." + traits.HierarchyRowClass).find(toolIcon),
+              std::string::npos)
+        << traits.HierarchyRowClass << " does not draw " << EditorIcons::kMarkup;
 }

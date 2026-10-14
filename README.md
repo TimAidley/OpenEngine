@@ -12,6 +12,10 @@ It also builds for the web: the same engine runs in the browser on WebGPU, shipp
 
 ![The Open Engine editor on a stylized village scene at evening: long shadows across the houses, a lake below, and the post-processing inspector open](docs/images/editor/editor-overview.webp)
 
+## Why Open Engine
+
+Game developers need a powerful, modern engine that is theirs: open source, owned by the community that uses it, and built on current ideas about how an engine should work. An MIT engine with no product and no monetization inside it cannot change its terms underneath your game or cancel the feature you depend on because it stopped paying; and it is built so an AI assistant can reach everything a person can. The whole answer, including why AI is part of it, is in [WHY-OPEN-ENGINE.md](WHY-OPEN-ENGINE.md) and at [openengine.dev/why](https://openengine.dev/why).
+
 ## Foundation
 
 - Open source, MIT licensed.
@@ -22,7 +26,7 @@ It also builds for the web: the same engine runs in the browser on WebGPU, shipp
 - A cross-platform editor for Windows, macOS, Linux and the web. Yes, the editor runs in the browser.
 - An ECS built on a true data-oriented design.
 - UI driven by CSS layout and XML, in the editor and in games.
-- Built for AI-assisted development: a bundled MCP server and CLI let AI agents drive the running editor, and an in-editor AI assistant ships as a preview. See [docs/MCP_SETUP.md](docs/MCP_SETUP.md).
+- Built for AI-assisted development: a bundled MCP server and CLI let AI agents drive the running editor, and an in-editor AI assistant ships as a preview. See [docs/getting-started/mcp-setup.mdx](docs/getting-started/mcp-setup.mdx).
 
 ## Try it in the browser
 
@@ -47,7 +51,7 @@ cmake --build --preset vs2026-x64-local --config DebugFast --target Editor -j 12
 build\vs2026-x64-local\bin\DebugFast\Apps\Editor\Editor.exe
 ```
 
-The first configure bootstraps vcpkg and builds the third-party dependencies once (expect tens of minutes); every build after that is incremental. macOS and Linux build the same Editor through their own presets (`macos-arm64-local`, `linux-x64-local`); platform prerequisites, the Ninja fast build, Steam Deck, tests and troubleshooting are in [BUILD.md](BUILD.md). With the editor running, [Your first project](docs/first-project.html) creates a project, saves a scene and exports a game.
+The first configure bootstraps vcpkg and builds the third-party dependencies once (expect tens of minutes); every build after that is incremental. macOS and Linux build the same Editor through their own presets (`macos-arm64-local`, `linux-x64-local`); platform prerequisites, the Ninja fast build, Steam Deck, tests and troubleshooting are in [BUILD.md](BUILD.md). With the editor running, [Your first project](docs/getting-started/first-project.mdx) creates a project, saves a scene and exports a game.
 
 ## Repository layout
 
@@ -65,7 +69,7 @@ Tests/                Integration tests (module unit tests live next to each mod
 ThirdParty/           Bundled third-party code, each with its own license
 cmake/                Build scripts, presets and ports
 mcp/                  The MCP server and CLI that drive a running editor
-docs/                 Documentation (start at docs/index.html)
+docs/                 Documentation (start at docs/README.md)
 Tools/                Developer tools and scripts
 dependencies/         Auto-provisioned vcpkg checkout (gitignored)
 build/                Build trees, one per preset (gitignored)

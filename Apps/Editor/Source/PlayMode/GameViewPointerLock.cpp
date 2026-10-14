@@ -1,5 +1,7 @@
 #include "PlayMode/GameViewPointerLock.h"
 
+#include "PlayMode/GameViewPointerLockRule.h"
+
 #include "Input/InputSystem.h"
 #include "Input/KeyCodes.h"
 #include "Platform/Window.h"
@@ -7,17 +9,45 @@
 namespace GameEngine::Editor
 {
 
+GameViewPointerLockState NextGameViewPointerLockState(GameViewPointerLockState state,
+                                                      const GameViewPointerLockInputs& inputs)
+{
+    // Leaving the window while locked is handing the pointer back, as Escape
+    // is: coming back to the editor by a click on another panel must not
+    // capture the pointer before that click lands.
+    if (state.Locked && (inputs.EscapePressed || !inputs.WindowFocused))
+        state.HandedBack = true;
+    if (inputs.GameViewPressed)
+        state.HandedBack = false;
+    if (!inputs.Playing || !inputs.Requested)
+        state.HandedBack = false;
+
+    state.Locked = inputs.Playing && inputs.Requested && inputs.GameViewActive && inputs.WindowFocused &&
+                   !state.HandedBack;
+    return state;
+}
+
 void GameViewPointerLock::Update(Input::InputSystem& runtimeInput, Platform::Window* gameViewWindow, bool playing)
 {
-    const bool requested = playing && runtimeInput.IsPointerLockRequested();
-    // A withdrawn request ends the hand-back: the next request is a new one.
-    if (!requested)
-        m_HandedBack = false;
+    GameViewPointerLockInputs inputs;
+    inputs.Playing = playing;
+    inputs.Requested = runtimeInput.GetPointerLockState() != Input::PointerLockState::Unlocked;
+    inputs.GameViewActive = gameViewWindow != nullptr;
+    inputs.WindowFocused = gameViewWindow && gameViewWindow->IsFocused();
+    inputs.EscapePressed = m_EscapePressed;
+    inputs.GameViewPressed = m_GameViewPressed;
+    m_EscapePressed = false;
+    m_GameViewPressed = false;
+    // The rule starts from the lock the platform holds: where it refused one
+    // (the browser build) the rule sees it unlocked, so a focus loss is not
+    // taken for a hand-back.
+    GameViewPointerLockState state;
+    state.Locked = m_LockedWindow != nullptr;
+    state.HandedBack = m_HandedBack;
+    state = NextGameViewPointerLockState(state, inputs);
+    m_HandedBack = state.HandedBack;
 
-    Platform::Window* target = nullptr;
-    if (requested && !m_HandedBack && gameViewWindow && gameViewWindow->IsFocused())
-        target = gameViewWindow;
-
+    Platform::Window* target = state.Locked ? gameViewWindow : nullptr;
     if (target != m_LockedWindow)
     {
         if (m_LockedWindow)
@@ -30,18 +60,19 @@ void GameViewPointerLock::Update(Input::InputSystem& runtimeInput, Platform::Win
                 m_LockedWindow = target;
         }
     }
-    runtimeInput.SetPointerLocked(m_LockedWindow != nullptr);
+    Input::IRawInputSink& sink = runtimeInput;
+    sink.OnPointerLock(m_LockedWindow != nullptr);
 }
 
 void GameViewPointerLock::OnKey(int key, int action)
 {
-    if (m_LockedWindow && key == Input::kKeyCode_Escape && action == Input::kKeyActionPress)
-        m_HandedBack = true;
+    if (key == Input::kKeyCode_Escape && action == Input::kKeyActionPress)
+        m_EscapePressed = true;
 }
 
 void GameViewPointerLock::OnGameViewPressed()
 {
-    m_HandedBack = false;
+    m_GameViewPressed = true;
 }
 
 void GameViewPointerLock::ForgetWindow(const Platform::Window* window)

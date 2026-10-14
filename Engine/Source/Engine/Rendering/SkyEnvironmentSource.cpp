@@ -2,6 +2,7 @@
 
 #include "Engine/Rendering/ImageBasedLightingFeature.h"
 #include "Engine/Rendering/RenderServices.h"
+#include "Engine/Rendering/IrradianceReadbackFeature.h"
 #include "Engine/Rendering/SkyRenderFeature.h"
 
 #include "Components/Rendering/SkyEnvironment.h" // Components::SkyMode
@@ -276,8 +277,9 @@ uint64_t SkyEnvironmentSource::InputDigest() const
     // steady sky bakes once.
     //
     // The capture SAMPLES the atmospheric sky-view LUT, which is a function of
-    // the sun + the full atmosphere block (see ComputeSkyViewLutInputDigest in
-    // SkyRenderNode). Folding the same atmosphere fields here means the IBL
+    // the sun + the full atmosphere block (see ComputeSkyLutSettingsDigest in
+    // SkyRenderNode) and of the camera's altitude band, which reaches this
+    // digest through MaterializedLutDigest. Folding the same atmosphere fields here means the IBL
     // re-bakes exactly once whenever the sky-view LUT (and therefore the sky the
     // user sees) changes — sun motion, atmosphere edits, ground/night/horizon
     // tweaks — and never on a frame where the sky is steady. nightSkyBlend +
@@ -681,8 +683,15 @@ void SkyEnvironmentSource::ScheduleBake(const EnvironmentBakeContext& ctx)
     // latched bakedDigest below -- InputDigest() re-evaluates the whole atmosphere block,
     // so computing it twice in one Declare is wasted work.
     const uint64_t digest = InputDigest();
+    auto* irradianceReadback = m_Services->GetFeature<IrradianceReadbackFeature>();
     if (digest == ctx.Feature->GetLastBakedDigest())
+    {
+        // A steady sky does not bake again, so a readback that arrives after the last bake
+        // copies the cube as it rests, once.
+        if (irradianceReadback)
+            irradianceReadback->DeclareRestingCopy(*device, *ctx.Frame, *ctx.Feature);
         return;
+    }
 
     // The sky changed. During an animated day/night cycle the digest shifts every
     // frame (sub-degree sun drift + slowly-moving day-key colors), but the 20-pass
@@ -813,6 +822,9 @@ void SkyEnvironmentSource::ScheduleBake(const EnvironmentBakeContext& ctx)
         [self, feature = &feature](RenderGraph::RGContext& c) {
             self->RecordDiffuseConvolve(c, *feature);
         });
+    if (irradianceReadback)
+        irradianceReadback->DeclareCopy(*device, frame, irrCube, ImageBasedLightingFeature::kIrradianceSize,
+                                        bakedDigest);
 
     // GGX specular prefilter (env cube -> prefilter cube mip chain). One pass; the
     // per-mip loop runs INSIDE exec, binding the feature's per-mip storage views.
