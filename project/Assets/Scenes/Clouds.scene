@@ -1,0 +1,168 @@
+[scene name="Clouds" version=1]
+
+[entity id="sun"]
+Light.type = 0
+Light.color = (1, 0.96, 0.9)
+Light.intensity = 100000
+Light.intensityUnit = Lux
+Light.castsShadows = true
+Light.castsLight = true
+Light.cascadeCount = 4
+Name.value = "Sun"
+Transform.position = (0, 10, 0)
+Transform.rotation = (0.35, 0.27, -0.1, 0.89)
+Transform.scale = (1, 1, 1)
+
+[entity id="ambient"]
+Light.type = 3
+Light.color = (0.6, 0.65, 0.75)
+Light.intensity = 14000
+Light.intensityUnit = Lux
+Name.value = "Ambient"
+Transform.position = (0, 0, 0)
+Transform.rotation = (0, 0, 0, 1)
+Transform.scale = (1, 1, 1)
+
+[entity id="sky"]
+Name.value = "Sky Environment"
+SkyEnvironment.Enabled = true
+SkyEnvironment.Mode = 0
+SkyEnvironment.GradientSkyTopColor = (0.2, 0.42, 0.78)
+SkyEnvironment.GradientSkyHorizonColor = (0.6, 0.72, 0.86)
+SkyEnvironment.GradientSkyBottomColor = (0.32, 0.3, 0.28)
+SkyEnvironment.GradientSkyIntensity = 18000
+SkyEnvironment.AutoSunMoon = false
+SkyEnvironment.TimeOfDayDrivesSunLight = false
+SkyEnvironment.SunLight = "sun"
+Transform.position = (0, 0, 0)
+Transform.rotation = (0, 0, 0, 1)
+Transform.scale = (1, 1, 1)
+
+[entity id="camera"]
+Camera.enabled = true
+Camera.fovY = 60
+Camera.nearZ = 0.1
+Camera.farZ = 3000
+Camera.exposureControl = 1
+Camera.manualExposureEV = 15.4
+Name.value = "Main Camera"
+Transform.position = (0, 110, -6)
+Transform.rotation = (0.122, 0, 0, 0.9925)
+Transform.scale = (1, 1, 1)
+
+[entity id="terrain"]
+Name.value = "Terrain"
+Terrain.enabled = true
+Terrain.sizeX = 512
+Terrain.sizeZ = 512
+Terrain.heightScale = 100
+Terrain.patchGridSize = 128
+Terrain.samplesPerMeter = 1
+Terrain.lodRangeScale = 1
+Terrain.renderLayerMask = 1
+Terrain.castShadows = true
+Terrain.receiveShadows = true
+Transform.position = (0, 0, 0)
+Transform.rotation = (0, 0, 0, 1)
+Transform.scale = (1, 1, 1)
+
+[entity id="post_fx"]
+Name.value = "Post FX"
+PostProcessVolume.enabled = true
+PostProcessVolume.isGlobal = true
+PostProcessVolume.weight = 1
+PostProcessVolume.priority = 0
+AtmosphericCloudLayer.Enabled = true
+AtmosphericCloudLayer.FloorHeight = 250
+AtmosphericCloudLayer.LayerDepth = 300
+AtmosphericCloudLayer.SkyFill = 1
+AtmosphericCloudLayer.VaporMass = 1
+AtmosphericCloudLayer.Opacity = 1
+Transform.position = (0, 0, 0)
+Transform.rotation = (0, 0, 0, 1)
+Transform.scale = (1, 1, 1)
+
+[entity id="near_add"]
+Name.value = "near additive"
+ParticleEmitter3D.enabled = true
+ParticleEmitter3D.Stack = [path="Particles/Puff.particlestack"]
+ParticleEmitter3D.Amount = 500
+ParticleEmitter3D.TicksPerSecond = 60
+ParticleEmitter3D.Seed = 1337
+ParticleRenderer.Material = [path="Materials/Additive.material"]
+ParticleRenderer.Texture = [path="Textures/PuffStraight.png"]
+ParticleRenderer.InheritScale = true
+Transform.position = (-3, 108.5, 14)
+Transform.rotation = (0, 0, 0, 1)
+Transform.scale = (0.8, 0.8, 0.8)
+
+[entity id="near_pre"]
+Name.value = "near premultiplied"
+ParticleEmitter3D.enabled = true
+ParticleEmitter3D.Stack = [path="Particles/Puff.particlestack"]
+ParticleEmitter3D.Amount = 500
+ParticleEmitter3D.TicksPerSecond = 60
+ParticleEmitter3D.Seed = 1337
+ParticleRenderer.Material = [path="Materials/Premultiplied.material"]
+ParticleRenderer.Texture = [path="Textures/PuffPremultiplied.png"]
+ParticleRenderer.InheritScale = true
+Transform.position = (3, 108.5, 14)
+Transform.rotation = (0, 0, 0, 1)
+Transform.scale = (0.8, 0.8, 0.8)
+
+[entity id="hill_add"]
+Name.value = "hill additive"
+ParticleEmitter3D.enabled = true
+ParticleEmitter3D.Stack = [path="Particles/Puff.particlestack"]
+ParticleEmitter3D.Amount = 500
+ParticleEmitter3D.TicksPerSecond = 60
+ParticleEmitter3D.Seed = 1337
+ParticleRenderer.Material = [path="Materials/Additive.material"]
+ParticleRenderer.Texture = [path="Textures/PuffStraight.png"]
+ParticleRenderer.InheritScale = true
+Transform.position = (-45, 72, 170)
+Transform.rotation = (0, 0, 0, 1)
+Transform.scale = (6, 6, 6)
+
+[entity id="hill_pre"]
+Name.value = "hill premultiplied"
+ParticleEmitter3D.enabled = true
+ParticleEmitter3D.Stack = [path="Particles/Puff.particlestack"]
+ParticleEmitter3D.Amount = 500
+ParticleEmitter3D.TicksPerSecond = 60
+ParticleEmitter3D.Seed = 1337
+ParticleRenderer.Material = [path="Materials/Premultiplied.material"]
+ParticleRenderer.Texture = [path="Textures/PuffPremultiplied.png"]
+ParticleRenderer.InheritScale = true
+Transform.position = (45, 72, 170)
+Transform.rotation = (0, 0, 0, 1)
+Transform.scale = (6, 6, 6)
+
+[entity id="sky_add"]
+Name.value = "sky additive"
+ParticleEmitter3D.enabled = true
+ParticleEmitter3D.Stack = [path="Particles/Puff.particlestack"]
+ParticleEmitter3D.Amount = 500
+ParticleEmitter3D.TicksPerSecond = 60
+ParticleEmitter3D.Seed = 1337
+ParticleRenderer.Material = [path="Materials/Additive.material"]
+ParticleRenderer.Texture = [path="Textures/PuffStraight.png"]
+ParticleRenderer.InheritScale = true
+Transform.position = (-90, 300, 900)
+Transform.rotation = (0, 0, 0, 1)
+Transform.scale = (22, 22, 22)
+
+[entity id="sky_pre"]
+Name.value = "sky premultiplied"
+ParticleEmitter3D.enabled = true
+ParticleEmitter3D.Stack = [path="Particles/Puff.particlestack"]
+ParticleEmitter3D.Amount = 500
+ParticleEmitter3D.TicksPerSecond = 60
+ParticleEmitter3D.Seed = 1337
+ParticleRenderer.Material = [path="Materials/Premultiplied.material"]
+ParticleRenderer.Texture = [path="Textures/PuffPremultiplied.png"]
+ParticleRenderer.InheritScale = true
+Transform.position = (90, 300, 900)
+Transform.rotation = (0, 0, 0, 1)
+Transform.scale = (22, 22, 22)
+

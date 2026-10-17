@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 3,
+  "materialName": "Additive smoke",
+  "lightingModel": "Unlit",
+  "alphaMode": "Blend",
+  "blend": { "dstColor": "One" }
+}

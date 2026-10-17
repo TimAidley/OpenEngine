@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 3,
+  "materialName": "Premultiplied smoke",
+  "lightingModel": "Unlit",
+  "alphaMode": "Blend",
+  "blend": { "srcColor": "One" }
+}
